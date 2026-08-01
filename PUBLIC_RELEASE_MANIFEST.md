@@ -19,6 +19,8 @@
 - pinned U.S. exchange-calendar resolution for holidays, DST and early closes;
 - an offline append-only confirmed/modeled portfolio ledger with atomic base
   DCA, owner-event corrections, accepted-close valuation and TWR;
+- a closed, versioned private daily-report JSON contract, deterministic Chinese
+  Markdown renderer and immutable local delivery outbox;
 - the complete `evaluate-us-funds` Skill and quantitative self-test.
 
 ## Verification performed
@@ -50,6 +52,11 @@
 - Modeled DCA is explicitly not a broker-confirmed execution. One active batch
   is allowed per ledger session, and either book's valuation freezes that and
   all earlier sessions against silent backfill.
+- The report outbox derives Markdown from validated JSON, stores only receiver
+  namespace/receipt digests, and refuses unsafe blind retries or adapter-scope
+  changes after an ambiguous send.
+- A recurring private runtime and verified GPT delivery adapter are not yet
+  deployed; the public workflow remains unscheduled and synthetic-only.
 
 ## Not implemented and not claimed complete
 

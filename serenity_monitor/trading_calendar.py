@@ -1,6 +1,8 @@
 """Fail-closed exchange-session resolution for private daily accounting.
 
-The public framework keeps an instrument's exchange MIC as identity metadata.
+The public framework keeps an instrument's canonical ISO 10383 exchange MIC
+as identity metadata.  Human-readable venue aliases are normalized before
+provenance is emitted.
 For U.S. equities, NASDAQ and NYSE share the holiday and regular-session
 schedule represented by ``exchange_calendars``' XNYS calendar.  Mapping XNAS
 to XNYS here therefore changes only the schedule implementation; it never
@@ -40,11 +42,15 @@ class ExchangeSessionResolver:
     instead of silently borrowing an unrelated exchange's hours.
     """
 
+    _MIC_ALIASES: Final[dict[str, str]] = {
+        "NYSE": "XNYS",
+        "NASDAQ": "XNAS",
+        "NYSEARCA": "ARCX",
+    }
     _MIC_TO_CALENDAR: Final[dict[str, str]] = {
         "XNYS": "XNYS",
-        "NYSE": "XNYS",
         "XNAS": "XNYS",
-        "NASDAQ": "XNYS",
+        "ARCX": "XNYS",
     }
 
     def __init__(self) -> None:
@@ -144,7 +150,8 @@ class ExchangeSessionResolver:
         return close_at.astimezone(dt.timezone.utc)
 
     def _resolve_calendar(self, mic: str) -> tuple[str, str, object]:
-        instrument_mic = str(mic).strip().upper()
+        supplied_mic = str(mic).strip().upper()
+        instrument_mic = self._MIC_ALIASES.get(supplied_mic, supplied_mic)
         calendar_name = self._MIC_TO_CALENDAR.get(instrument_mic)
         if calendar_name is None:
             raise ExchangeSessionError(f"unsupported exchange MIC: {instrument_mic or '<empty>'}")

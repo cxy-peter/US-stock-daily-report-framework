@@ -1,0 +1,967 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/serenity-monitor/schemas/private_daily_report.v1.schema.json",
+  "title": "Private Daily Report v1",
+  "description": "Stable owner-only machine contract. Decimal values are canonical, non-exponent JSON strings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "report_id",
+    "classification",
+    "simulation",
+    "report_status",
+    "prepared_at",
+    "delivery",
+    "calendar",
+    "session_results",
+    "portfolio",
+    "dca",
+    "research",
+    "source_health",
+    "actions",
+    "manual_trade_prompt",
+    "privacy"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "schema_version": {
+      "const": "private_daily_report/v1.0.0"
+    },
+    "report_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "classification": {
+      "enum": ["private_owner_only", "synthetic_example"]
+    },
+    "simulation": {
+      "type": "boolean"
+    },
+    "report_status": {
+      "enum": ["complete", "complete_with_warnings", "blocked", "no_new_close"]
+    },
+    "prepared_at": {
+      "$ref": "#/$defs/date_time"
+    },
+    "delivery": {
+      "$ref": "#/$defs/delivery"
+    },
+    "calendar": {
+      "$ref": "#/$defs/calendar"
+    },
+    "session_results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/session_result"
+      }
+    },
+    "portfolio": {
+      "$ref": "#/$defs/portfolio"
+    },
+    "dca": {
+      "$ref": "#/$defs/dca"
+    },
+    "research": {
+      "$ref": "#/$defs/research"
+    },
+    "source_health": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source_health_item"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "manual_trade_prompt": {
+      "$ref": "#/$defs/manual_trade_prompt"
+    },
+    "privacy": {
+      "$ref": "#/$defs/privacy"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "safe_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Z0-9][A-Z0-9_.:-]*$"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "date_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\\.[0-9]*[1-9])$"
+    },
+    "nonnegative_decimal": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*|(?:0|[1-9][0-9]*)\\.[0-9]*[1-9])$"
+    },
+    "positive_decimal": {
+      "type": "string",
+      "pattern": "^(?:[1-9][0-9]*|(?:0|[1-9][0-9]*)\\.[0-9]*[1-9])$"
+    },
+    "nullable_decimal": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_nonnegative_decimal": {
+      "oneOf": [
+        {"$ref": "#/$defs/nonnegative_decimal"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_positive_decimal": {
+      "oneOf": [
+        {"$ref": "#/$defs/positive_decimal"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_sha256": {
+      "oneOf": [
+        {"$ref": "#/$defs/sha256"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_safe_id": {
+      "oneOf": [
+        {"$ref": "#/$defs/safe_id"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_date": {
+      "oneOf": [
+        {"$ref": "#/$defs/date"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_date_time": {
+      "oneOf": [
+        {"$ref": "#/$defs/date_time"},
+        {"type": "null"}
+      ]
+    },
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
+      "uniqueItems": true
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delivery_id", "delivery_date", "timezone", "channel"],
+      "properties": {
+        "delivery_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "delivery_date": {
+          "$ref": "#/$defs/date"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "channel": {
+          "$ref": "#/$defs/safe_id"
+        }
+      }
+    },
+    "calendar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calendar_id",
+        "exchange_mic",
+        "exchange_timezone",
+        "report_timezone",
+        "as_of",
+        "mode",
+        "latest_completed_session",
+        "last_settled_session_before_run",
+        "unsettled_sessions",
+        "provenance",
+        "new_sessions_count",
+        "no_new_close"
+      ],
+      "properties": {
+        "calendar_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "exchange_mic": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{4}$"
+        },
+        "exchange_timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "report_timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "as_of": {
+          "$ref": "#/$defs/date_time"
+        },
+        "mode": {
+          "enum": ["none", "single", "backfill"]
+        },
+        "latest_completed_session": {
+          "$ref": "#/$defs/nullable_date"
+        },
+        "last_settled_session_before_run": {
+          "$ref": "#/$defs/nullable_date"
+        },
+        "unsettled_sessions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/date"
+          }
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/calendar_provenance"
+          }
+        },
+        "new_sessions_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_new_close": {
+          "type": "boolean"
+        }
+      }
+    },
+    "calendar_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instrument_mic",
+        "calendar_name",
+        "calendar_version",
+        "exchange_timezone"
+      ],
+      "properties": {
+        "instrument_mic": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{4}$"
+        },
+        "calendar_name": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "calendar_version": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "exchange_timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "gate_status": {
+      "enum": ["passed", "blocked", "not_attempted"]
+    },
+    "session_operational_status": {
+      "enum": [
+        "settled",
+        "already_settled",
+        "skipped_by_owner",
+        "blocked",
+        "not_attempted_prior_session_blocked"
+      ]
+    },
+    "session_valuation_status": {
+      "enum": ["fresh", "unavailable", "not_attempted"]
+    },
+    "session_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_date",
+        "status",
+        "is_backfill",
+        "close_batch_id",
+        "ledger_batch_id",
+        "calendar_gate",
+        "price_gate",
+        "corporate_action_gate",
+        "funding_gate",
+        "dca_status",
+        "confirmed_valuation_status",
+        "modeled_valuation_status",
+        "confirmed_valuation_id",
+        "modeled_valuation_id",
+        "reason_codes"
+      ],
+      "properties": {
+        "session_date": {
+          "$ref": "#/$defs/date"
+        },
+        "status": {
+          "$ref": "#/$defs/session_operational_status"
+        },
+        "is_backfill": {
+          "type": "boolean"
+        },
+        "close_batch_id": {
+          "$ref": "#/$defs/nullable_sha256"
+        },
+        "ledger_batch_id": {
+          "$ref": "#/$defs/nullable_safe_id"
+        },
+        "calendar_gate": {
+          "$ref": "#/$defs/gate_status"
+        },
+        "price_gate": {
+          "$ref": "#/$defs/gate_status"
+        },
+        "corporate_action_gate": {
+          "$ref": "#/$defs/gate_status"
+        },
+        "funding_gate": {
+          "$ref": "#/$defs/gate_status"
+        },
+        "dca_status": {
+          "$ref": "#/$defs/session_operational_status"
+        },
+        "confirmed_valuation_status": {
+          "$ref": "#/$defs/session_valuation_status"
+        },
+        "modeled_valuation_status": {
+          "$ref": "#/$defs/session_valuation_status"
+        },
+        "confirmed_valuation_id": {
+          "$ref": "#/$defs/nullable_safe_id"
+        },
+        "modeled_valuation_id": {
+          "$ref": "#/$defs/nullable_safe_id"
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "symbol",
+        "quantity",
+        "modeled_quantity",
+        "accepted_close",
+        "accepted_close_id",
+        "selected_provider_id",
+        "price_session",
+        "market_value",
+        "economic_cost",
+        "average_economic_cost",
+        "unrealized_pnl",
+        "portfolio_weight"
+      ],
+      "properties": {
+        "symbol": {
+          "$ref": "#/$defs/symbol"
+        },
+        "quantity": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "modeled_quantity": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "accepted_close": {
+          "$ref": "#/$defs/nullable_positive_decimal"
+        },
+        "accepted_close_id": {
+          "$ref": "#/$defs/nullable_sha256"
+        },
+        "selected_provider_id": {
+          "$ref": "#/$defs/nullable_safe_id"
+        },
+        "price_session": {
+          "$ref": "#/$defs/nullable_date"
+        },
+        "market_value": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "economic_cost": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "average_economic_cost": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "unrealized_pnl": {
+          "$ref": "#/$defs/nullable_decimal"
+        },
+        "portfolio_weight": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valuation_session",
+        "prior_nav",
+        "prior_cumulative_twr",
+        "net_external_flow",
+        "weighted_external_flow",
+        "daily_pnl",
+        "daily_return",
+        "cumulative_twr"
+      ],
+      "properties": {
+        "valuation_session": {
+          "$ref": "#/$defs/nullable_date"
+        },
+        "prior_nav": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "prior_cumulative_twr": {
+          "$ref": "#/$defs/nullable_decimal"
+        },
+        "net_external_flow": {
+          "$ref": "#/$defs/decimal"
+        },
+        "weighted_external_flow": {
+          "$ref": "#/$defs/decimal"
+        },
+        "daily_pnl": {
+          "$ref": "#/$defs/nullable_decimal"
+        },
+        "daily_return": {
+          "$ref": "#/$defs/nullable_decimal"
+        },
+        "cumulative_twr": {
+          "$ref": "#/$defs/nullable_decimal"
+        }
+      }
+    },
+    "book": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valuation_status",
+        "cash",
+        "nav",
+        "market_value",
+        "total_economic_cost",
+        "realized_pnl",
+        "fees",
+        "performance",
+        "positions"
+      ],
+      "properties": {
+        "valuation_status": {
+          "enum": ["fresh", "carried_forward_display_only", "unavailable"]
+        },
+        "cash": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "nav": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "market_value": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "total_economic_cost": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "realized_pnl": {
+          "$ref": "#/$defs/decimal"
+        },
+        "fees": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "performance": {
+          "$ref": "#/$defs/performance"
+        },
+        "positions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/position"
+          }
+        }
+      }
+    },
+    "portfolio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currency",
+        "as_of_session",
+        "ledger_last_event_hash",
+        "confirmed",
+        "modeled"
+      ],
+      "properties": {
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "as_of_session": {
+          "$ref": "#/$defs/nullable_date"
+        },
+        "ledger_last_event_hash": {
+          "$ref": "#/$defs/nullable_sha256"
+        },
+        "confirmed": {
+          "$ref": "#/$defs/book"
+        },
+        "modeled": {
+          "$ref": "#/$defs/book"
+        }
+      }
+    },
+    "dca_configured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount"],
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/positive_decimal"
+        }
+      }
+    },
+    "dca_proposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "action", "rationale_codes", "automatic_execution"],
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "action": {
+          "enum": ["maintain", "increase_review", "decrease_review", "pause_review", "none"]
+        },
+        "rationale_codes": {
+          "$ref": "#/$defs/string_list"
+        },
+        "automatic_execution": {
+          "const": false
+        }
+      }
+    },
+    "dca_modeled_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_date",
+        "status",
+        "amount",
+        "spend",
+        "residual",
+        "quantity",
+        "accepted_close",
+        "accepted_close_id",
+        "settlement_event_id"
+      ],
+      "properties": {
+        "session_date": {
+          "$ref": "#/$defs/date"
+        },
+        "status": {
+          "$ref": "#/$defs/session_operational_status"
+        },
+        "amount": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "spend": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "residual": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "quantity": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "accepted_close": {
+          "$ref": "#/$defs/nullable_positive_decimal"
+        },
+        "accepted_close_id": {
+          "$ref": "#/$defs/nullable_sha256"
+        },
+        "settlement_event_id": {
+          "$ref": "#/$defs/nullable_safe_id"
+        }
+      }
+    },
+    "dca_modeled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_claim", "sessions"],
+      "properties": {
+        "execution_claim": {
+          "const": false
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dca_modeled_session"
+          }
+        }
+      }
+    },
+    "dca_broker_confirmed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "availability",
+        "status",
+        "amount",
+        "quantity",
+        "price",
+        "trade_id"
+      ],
+      "properties": {
+        "availability": {
+          "const": "unavailable"
+        },
+        "status": {
+          "const": "not_connected"
+        },
+        "amount": {
+          "type": "null"
+        },
+        "quantity": {
+          "type": "null"
+        },
+        "price": {
+          "type": "null"
+        },
+        "trade_id": {
+          "type": "null"
+        }
+      }
+    },
+    "dca_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "configured", "proposed", "modeled", "broker_confirmed"],
+      "properties": {
+        "symbol": {
+          "$ref": "#/$defs/symbol"
+        },
+        "configured": {
+          "$ref": "#/$defs/dca_configured"
+        },
+        "proposed": {
+          "$ref": "#/$defs/dca_proposed"
+        },
+        "modeled": {
+          "$ref": "#/$defs/dca_modeled"
+        },
+        "broker_confirmed": {
+          "$ref": "#/$defs/dca_broker_confirmed"
+        }
+      }
+    },
+    "dca": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "version", "currency", "funding_mode", "items"],
+      "properties": {
+        "plan_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "version": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "funding_mode": {
+          "enum": ["existing_cash", "modeled_external_contribution"]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dca_item"
+          }
+        }
+      }
+    },
+    "fund_monitoring_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fund_key", "status", "summary", "reason_codes"],
+      "properties": {
+        "fund_key": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "status": {
+          "enum": ["PASS", "WATCH", "REJECT", "NEED_INFO", "NOT_DUE"]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "social_attention_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "topic", "direction", "status", "score", "research_only", "summary"],
+      "properties": {
+        "platform": {
+          "enum": ["xiaohongshu", "x", "reddit", "other"]
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "direction": {
+          "enum": ["positive", "negative", "mixed", "neutral", "unknown"]
+        },
+        "status": {
+          "enum": ["healthy", "degraded", "blocked", "quarantined", "not_configured"]
+        },
+        "score": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "research_only": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    "research": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overall_view",
+        "market_regime",
+        "risk_budget_multiplier",
+        "fund_monitoring",
+        "social_attention",
+        "notes"
+      ],
+      "properties": {
+        "overall_view": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "market_regime": {
+          "enum": ["risk_on", "neutral", "cautious", "risk_off", "unknown"]
+        },
+        "risk_budget_multiplier": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "fund_monitoring": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fund_monitoring_item"
+          }
+        },
+        "social_attention": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/social_attention_item"
+          }
+        },
+        "notes": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "source_health_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_type", "status", "required", "observed_at", "detail_code"],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "source_type": {
+          "enum": ["accepted_close", "calendar", "ledger", "primary_research", "news", "social", "other"]
+        },
+        "status": {
+          "enum": [
+            "healthy",
+            "ok",
+            "accepted",
+            "degraded",
+            "partial",
+            "blocked",
+            "error",
+            "disabled",
+            "not_configured"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "observed_at": {
+          "$ref": "#/$defs/nullable_date_time"
+        },
+        "detail_code": {
+          "oneOf": [
+            {"$ref": "#/$defs/safe_id"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "scope",
+        "symbol",
+        "action",
+        "priority",
+        "status",
+        "owner_confirmation_required",
+        "automatic_execution",
+        "rationale_codes"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "scope": {
+          "enum": ["portfolio", "position", "dca", "fund", "data", "privacy"]
+        },
+        "symbol": {
+          "oneOf": [
+            {"$ref": "#/$defs/symbol"},
+            {"type": "null"}
+          ]
+        },
+        "action": {
+          "enum": ["HOLD", "REVIEW", "ADD", "REDUCE", "EXIT", "PAUSE_DCA", "RESUME_DCA", "BLOCK_NEW_RISK"]
+        },
+        "priority": {
+          "enum": ["low", "normal", "high", "critical"]
+        },
+        "status": {
+          "enum": ["informational", "proposed", "blocked"]
+        },
+        "owner_confirmation_required": {
+          "type": "boolean"
+        },
+        "automatic_execution": {
+          "const": false
+        },
+        "rationale_codes": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "manual_trade_prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "prompt",
+        "accepted_response_kinds",
+        "default_if_no_response",
+        "broker_execution_available"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "prompt": {
+          "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 4096},
+            {"type": "null"}
+          ]
+        },
+        "accepted_response_kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["no_manual_trade", "confirmed_fill", "cash_flow", "income", "fee", "split", "skip_dca"]
+          }
+        },
+        "default_if_no_response": {
+          "const": "no_new_owner_confirmed_event"
+        },
+        "broker_execution_available": {
+          "const": false
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_private_portfolio_data",
+        "contains_target_identifier",
+        "github_persistence_allowed",
+        "public_artifact_allowed",
+        "gpt_owner_delivery_only",
+        "redaction_status",
+        "warnings"
+      ],
+      "properties": {
+        "contains_private_portfolio_data": {
+          "type": "boolean"
+        },
+        "contains_target_identifier": {
+          "const": false
+        },
+        "github_persistence_allowed": {
+          "const": false
+        },
+        "public_artifact_allowed": {
+          "const": false
+        },
+        "gpt_owner_delivery_only": {
+          "const": true
+        },
+        "redaction_status": {
+          "enum": ["private_owner_only", "synthetic_only"]
+        },
+        "warnings": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    }
+  }
+}

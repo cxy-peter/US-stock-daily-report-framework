@@ -1,6 +1,7 @@
 numpy>=1.26,<2.0
 pandas>=2.2,<3.0
 exchange-calendars==4.13.2
+jsonschema==4.26.0
 pyyaml>=6.0
 requests>=2.31
 baostock>=0.8.9

@@ -106,6 +106,22 @@ current accepted closes for every non-zero position and calculate Decimal-only
 P/L and time-weighted return. The database and derived output must stay in an
 ignored private runtime. See [Manual Ledger](docs/MANUAL_LEDGER.md).
 
+## Private daily-report contract
+
+`schemas/private_daily_report.v1.schema.json` is the stable owner-only JSON
+contract for one daily report. It separates completed, blocked and no-new-close
+runs; multi-session backfill; confirmed versus modeled books; and configured,
+proposed, modeled and broker-confirmed DCA states. Decimal strings, UTC
+timestamps, calendar/ledger watermarks and report identities are validated
+fail-closed.
+
+`serenity_monitor/private_daily_markdown.py` produces the deterministic Chinese
+view without recalculating accounting. `serenity_monitor/daily_outbox.py`
+stores one immutable private report per receiver/day and refuses a delivery
+adapter that has neither idempotency-key nor receiver-lookup support. It does
+not send a message itself, and the private runtime orchestrator is not yet
+wired. See [Private Daily Report Contract](docs/PRIVATE_DAILY_REPORT.md).
+
 ## Social research boundary
 
 X, Reddit and Xiaohongshu belong to one `social_media` evidence group. The
@@ -203,6 +219,10 @@ serenity_monitor/data.py                 market-data providers
 serenity_monitor/provider_registry.py    accepted-close price validation
 serenity_monitor/trading_calendar.py     exchange-session completion
 serenity_monitor/portfolio_ledger.py     private manual/DCA accounting
+schemas/private_daily_report.v1.schema.json owner-only report contract
+serenity_monitor/private_daily_report.py report validation and identities
+serenity_monitor/private_daily_markdown.py deterministic private Markdown
+serenity_monitor/daily_outbox.py          private delivery state machine
 serenity_monitor/external_views.py       source collection and health
 serenity_monitor/credibility.py          source/claim/copy-trade scoring
 serenity_monitor/evidence.py             evidence and independence gates
