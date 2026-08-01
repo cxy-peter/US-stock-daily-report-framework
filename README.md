@@ -99,6 +99,13 @@ posts the configured base DCA after the calendar, accepted-close,
 corporate-action and funding gates all pass. Silence never creates a manual
 trade, and no broker login or order method exists.
 
+Later owner events use a staged local control instead of prose: write one
+closed-schema JSON request to `<SERENITY_PRIVATE_ROOT>/manual-event.request.json`,
+approve its exact byte digest from a real TTY with
+`python scripts/attest_private_event.py`, and let the daily runtime consume the
+immutable approval before valuation. Approval does not place an order or mutate
+the ledger. See [Manual Ledger](docs/MANUAL_LEDGER.md).
+
 `serenity_monitor/trading_calendar.py` uses a pinned exchange calendar for DST,
 holidays and early closes. One session can contain only one atomic modeled-DCA
 batch, and repeated runs are content-checked for idempotency. Valuations require
@@ -270,9 +277,25 @@ Then prepare one private report/outbox item after the official close:
 python scripts/run_private_daily.py
 ```
 
-All three commands accept no CLI arguments. Normal stdout is empty; failures
+If an actual fill, cash flow, fee, income, split or DCA skip must be recorded,
+first write the v1 request to the fixed owner-only
+`manual-event.request.json` path documented in `docs/MANUAL_LEDGER.md`, then
+approve those exact bytes interactively:
+
+```bash
+python scripts/attest_private_event.py
+python scripts/run_private_daily.py
+```
+
+The approval command only publishes a private immutable approval. The daily
+runtime audits the complete queue and outbox under the same lock, commits each
+pending event idempotently, publishes its ledger-bound receipt, then performs
+modeled DCA and valuation. A confirmed replacement of that session's modeled
+DCA is applied in the strict order `settle -> replacement -> valuation`.
+
+These guarded commands accept no CLI arguments. Normal stdout is empty; failures
 emit only a fixed error code, never a path, target, holding, amount, credential
-or traceback. The attestation command prints only a random challenge, fixed
+or traceback. Each attestation command prints only a random challenge, fixed
 instructions and a fixed success marker to its terminal. The daily command
 does not create owner-confirmed fills: if the owner reports no trade, the
 ledger records no manual event and only the fixed base DCA plan is modeled at
@@ -304,9 +327,10 @@ synthetic offline smoke report in the runner's temporary directory. It has:
 - no report commit or write permission.
 
 The private prepare runtime is implemented separately from legacy
-`run_report.py`. A verified GPT receiver adapter and recurring delivery job are
-still not enabled; the existing task must remain paused until receiver lookup
-or stable idempotency semantics are proven.
+`run_report.py`. Owner-confirmed manual-event ingestion is implemented, but a
+verified GPT receiver adapter and recurring delivery job are still not enabled;
+the existing task must remain paused until receiver lookup or stable
+idempotency semantics and one persisted live end-to-end trial are proven.
 
 ## Main files
 

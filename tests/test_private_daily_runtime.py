@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import io
+import json
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import serenity_monitor.opening_owner_attestation as opening_attestation
+import serenity_monitor.manual_owner_event as manual_owner_event
 import serenity_monitor.private_report_store as private_report_store
 from serenity_monitor.daily_outbox import (
     DailyReportOutbox,
@@ -18,6 +20,13 @@ from serenity_monitor.daily_outbox import (
 from serenity_monitor.opening_owner_attestation import (
     create_opening_owner_claim,
     interactive_owner_presence,
+)
+from serenity_monitor.manual_owner_event import (
+    REQUEST_CONTRACT_VERSION,
+    approve_manual_event,
+    interactive_manual_event_presence,
+    load_manual_event_queue,
+    load_manual_event_request,
 )
 from serenity_monitor.portfolio_ledger import PortfolioLedger
 from serenity_monitor.private_daily_report import validate_private_daily_report
@@ -35,6 +44,7 @@ from serenity_monitor.private_runtime_config import (
 from serenity_monitor.private_runtime_paths import (
     PrivateRuntimePaths,
     ensure_private_storage,
+    tighten_private_file,
 )
 from serenity_monitor.provider_registry import (
     CloseObservation,
@@ -76,6 +86,11 @@ def _allow_synthetic_temp_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         private_report_store,
         "validate_private_report_directory",
         lambda paths, directory: Path(directory),
+    )
+    monkeypatch.setattr(
+        manual_owner_event,
+        "validate_existing_private_storage_root",
+        lambda paths: paths.root,
     )
 
 
@@ -234,6 +249,35 @@ def _runtime(config, calendar, ledger, outbox, reports, registry, clock):
     )
 
 
+def _approve_runtime_event(
+    config,
+    paths: PrivateRuntimePaths,
+    body: dict,
+    clock: MutableClock,
+):
+    payload = json.dumps(
+        body,
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8") + b"\n"
+    paths.manual_event_request_file.write_bytes(payload)
+    tighten_private_file(paths.manual_event_request_file)
+    request = load_manual_event_request(config, paths)
+    challenge = "23456789AB"
+    prefix = hashlib.sha256(payload).hexdigest()[:8]
+    input_stream = io.StringIO(f"CONFIRM {challenge} {prefix}\n")
+    output_stream = io.StringIO()
+    input_stream.isatty = lambda: True
+    output_stream.isatty = lambda: True
+    proof = interactive_manual_event_presence(
+        request,
+        input_stream,
+        output_stream,
+        challenge_factory=lambda: challenge,
+    )
+    return approve_manual_event(config, paths, request, proof, clock)
+
+
 def _deliver(outbox: DailyReportOutbox, delivery_id: str, now: dt.datetime) -> None:
     claim = outbox.claim(delivery_id, EXACTLY_ONCE, now=now)
     outbox.mark_delivered(
@@ -267,6 +311,142 @@ def test_initialize_and_single_session_fixed_dca_report(tmp_path: Path) -> None:
     assert report["manual_trade_prompt"]["default_if_no_response"] == "no_new_owner_confirmed_event"
     assert report["portfolio"]["modeled"]["nav"] != report["portfolio"]["confirmed"]["nav"]
     assert len(first.calls) == len(second.calls) == 4
+
+
+def test_live_owner_skip_is_consumed_before_modeled_dca(tmp_path: Path) -> None:
+    config = replace(_config(), classification="private", simulation=False)
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, _, _ = _state(
+        tmp_path,
+        config,
+        clock,
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    runtime = _runtime(config, calendar, ledger, outbox, reports, registry, clock)
+    assert runtime.runtime_paths is not None
+    _approve_runtime_event(
+        config,
+        runtime.runtime_paths,
+        {
+            "contract_version": REQUEST_CONTRACT_VERSION,
+            "event_kind": "skip_dca",
+            "event_nonce": "a" * 32,
+            "occurred_at": None,
+            "payload": {
+                "plan_id": config.dca_plan.plan_id,
+                "plan_version": config.dca_plan.version,
+                "reason": "owner explicit skip",
+            },
+            "session": "2026-01-05",
+        },
+        clock,
+    )
+
+    result = runtime.prepare(TARGET)
+
+    report = validate_private_daily_report(
+        outbox.load_validated_content(result.delivery_id).report
+    )
+    assert report["session_results"][0]["status"] == "skipped_by_owner"
+    assert ledger.session_audit(dt.date(2026, 1, 5)).owner_skip is not None
+    assert load_manual_event_queue(
+        config,
+        runtime.runtime_paths,
+        ledger.event_checkpoint,
+        ledger.latest_valuation_watermark(),
+    ) == ()
+
+
+def test_live_dca_replacement_is_applied_after_settlement_before_valuation(
+    tmp_path: Path,
+) -> None:
+    config = replace(_config(), classification="private", simulation=False)
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, _, _ = _state(
+        tmp_path,
+        config,
+        clock,
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    runtime = _runtime(config, calendar, ledger, outbox, reports, registry, clock)
+    assert runtime.runtime_paths is not None
+    _approve_runtime_event(
+        config,
+        runtime.runtime_paths,
+        {
+            "contract_version": REQUEST_CONTRACT_VERSION,
+            "event_kind": "confirmed_fill",
+            "event_nonce": "b" * 32,
+            "occurred_at": "2026-01-05T18:30:00Z",
+            "payload": {
+                "fees": "0",
+                "modeled_dca_replacement": True,
+                "plan_id": config.dca_plan.plan_id,
+                "plan_version": config.dca_plan.version,
+                "price": "101",
+                "quantity": "0.11",
+                "side": "buy",
+                "symbol": "DEMO_EQ",
+            },
+            "session": "2026-01-05",
+        },
+        clock,
+    )
+
+    result = runtime.prepare(TARGET)
+
+    assert result.report_status == "complete"
+    confirmed = ledger.project("confirmed", dt.date(2026, 1, 5)).by_symbol
+    modeled = ledger.project("modeled", dt.date(2026, 1, 5)).by_symbol
+    assert confirmed["DEMO_EQ"].quantity == Decimal("10.11")
+    assert modeled["DEMO_EQ"].quantity == Decimal("10.11")
+    assert modeled["DEMO_EQ"].modeled_quantity == Decimal("0")
+    assert modeled["DEMO_BOND"].modeled_quantity == Decimal("0.2")
+    assert load_manual_event_queue(
+        config,
+        runtime.runtime_paths,
+        ledger.event_checkpoint,
+        ledger.latest_valuation_watermark(),
+    ) == ()
+
+
+def test_unapproved_private_request_blocks_before_provider_or_ledger_mutation(
+    tmp_path: Path,
+) -> None:
+    config = replace(_config(), classification="private", simulation=False)
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, first, second = _state(
+        tmp_path,
+        config,
+        clock,
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    runtime = _runtime(config, calendar, ledger, outbox, reports, registry, clock)
+    assert runtime.runtime_paths is not None
+    request = {
+        "contract_version": REQUEST_CONTRACT_VERSION,
+        "event_kind": "fee",
+        "event_nonce": "c" * 32,
+        "occurred_at": None,
+        "payload": {"amount": "1", "description": "owner fee"},
+        "session": "2026-01-05",
+    }
+    runtime.runtime_paths.manual_event_request_file.write_text(
+        json.dumps(request),
+        encoding="utf-8",
+    )
+    tighten_private_file(runtime.runtime_paths.manual_event_request_file)
+    chain_head = ledger.last_event_hash()
+    provider_calls = (list(first.calls), list(second.calls))
+
+    with pytest.raises(
+        PrivateDailyIntegrityError,
+        match="manual_owner_event_queue_invalid",
+    ):
+        runtime.prepare(TARGET)
+
+    assert ledger.last_event_hash() == chain_head
+    assert (first.calls, second.calls) == provider_calls
 
 
 def test_aggregate_research_projection_cannot_change_dca_or_actions(tmp_path: Path) -> None:
@@ -369,6 +549,36 @@ def test_same_day_slot_must_belong_to_the_current_ledger_chain(
     runtime = _runtime(config, calendar, ledger, outbox, reports, registry, clock)
     runtime.prepare(TARGET)
     monkeypatch.setattr(ledger, "contains_event_hash", lambda _value: False)
+
+    with pytest.raises(
+        PrivateDailyIntegrityError,
+        match="same_day_report_not_in_current_ledger_chain",
+    ):
+        runtime.prepare(TARGET)
+
+
+def test_same_day_slot_rejects_an_ancestor_that_is_not_the_current_chain_head(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, _, _ = _state(
+        tmp_path,
+        config,
+        clock,
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    runtime = _runtime(config, calendar, ledger, outbox, reports, registry, clock)
+    prepared = runtime.prepare(TARGET)
+    persisted = outbox.load_validated_content(prepared.delivery_id)
+    prior_hash = persisted.report["portfolio"]["ledger_last_event_hash"]
+    ledger.record_cash_flow(
+        dt.date(2026, 1, 6),
+        Decimal("1"),
+        idempotency_key="post-report-owner-event",
+    )
+    assert ledger.contains_event_hash(prior_hash)
+    assert ledger.last_event_hash() != prior_hash
 
     with pytest.raises(
         PrivateDailyIntegrityError,

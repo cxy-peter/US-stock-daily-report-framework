@@ -88,6 +88,30 @@ class PrivateRuntimePaths:
 
         return self.root / "opening-owner-attestation.receipt.json"
 
+    @property
+    def manual_event_request_file(self) -> Path:
+        """Fixed untrusted request reviewed by the owner from an interactive TTY."""
+
+        return self.root / "manual-event.request.json"
+
+    @property
+    def manual_event_directory(self) -> Path:
+        """Owner-only control directory for approved manual events."""
+
+        return self.root / "manual-events"
+
+    @property
+    def manual_event_approved_directory(self) -> Path:
+        """Immutable approved envelopes; filenames contain only opaque nonces."""
+
+        return self.manual_event_directory / "approved"
+
+    @property
+    def manual_event_receipt_directory(self) -> Path:
+        """Immutable ledger-binding receipts for consumed approved envelopes."""
+
+        return self.manual_event_directory / "receipts"
+
 
 def _normalized_component(value: str) -> str:
     return "".join(character for character in value.casefold() if character.isalnum())

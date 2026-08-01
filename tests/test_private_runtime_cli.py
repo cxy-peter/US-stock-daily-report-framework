@@ -4,6 +4,7 @@ import io
 import os
 import subprocess
 import sys
+import datetime as dt
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ import serenity_monitor.opening_owner_attestation as opening_attestation
 from serenity_monitor.private_runtime_config import PrivateRuntimeConfigError
 from serenity_monitor.private_runtime_paths import PrivateRuntimePathError
 from scripts import attest_private_opening as attestation_script
+from scripts import attest_private_event as manual_event_script
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,6 +118,117 @@ def test_attestation_requires_live_config_before_any_prompt() -> None:
     assert stdout == ""
     assert stderr == "PRIVATE_OPENING_ATTESTATION:CONFIG_OR_PRIVACY_REJECTED\n"
     assert "Type CONFIRM" not in stderr
+
+
+def test_manual_event_attestation_requires_live_config_before_any_prompt() -> None:
+    code, stdout, stderr = _capture(
+        lambda: private_runtime_cli.attest_private_event_main(
+            environ={},
+            input_stream=TTYBuffer(),
+            output_stream=TTYBuffer(),
+        )
+    )
+
+    assert code == private_runtime_cli.EXIT_CONFIG_OR_PRIVACY
+    assert stdout == ""
+    assert stderr == "PRIVATE_MANUAL_EVENT:CONFIG_OR_PRIVACY_REJECTED\n"
+
+
+def test_manual_event_attestation_approves_only_inside_the_guarded_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    config = SimpleNamespace(ledger_policy=object(), primary_mic="XNAS")
+    ledger_path = tmp_path / "ledger.sqlite3"
+    ledger_path.touch()
+    paths = SimpleNamespace(
+        ledger_database=ledger_path,
+        outbox_database=tmp_path / "missing-outbox.sqlite3",
+        lock_file=tmp_path / "private.lock",
+    )
+    checkpoint = SimpleNamespace(
+        opening_event_id="1" * 64,
+        opening_event_hash="2" * 64,
+        idempotency_key="opening-key",
+        created_at=now - dt.timedelta(days=4),
+    )
+
+    class Ledger:
+        def opening_checkpoint(self):
+            return checkpoint
+
+        def latest_common_valuation(self):
+            return object()
+
+        def latest_valuation_watermark(self):
+            return dt.date(2026, 1, 2)
+
+        def last_event_hash(self):
+            return "3" * 64
+
+    request = SimpleNamespace(
+        session=dt.date(2026, 1, 5),
+        occurred_at=now - dt.timedelta(hours=10),
+    )
+    proof = object()
+    approved: dict[str, object] = {}
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "_load_live_config_bundle",
+        lambda _environment: (config, "a" * 64),
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "resolve_private_runtime_paths",
+        lambda _config, _environment: paths,
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "private_runtime_lock",
+        lambda _path: nullcontext(),
+    )
+    monkeypatch.setattr(private_runtime_cli, "PortfolioLedger", lambda *_args, **_kwargs: Ledger())
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "audit_opening_owner_attestation",
+        lambda *_args, **_kwargs: SimpleNamespace(state="consumed_verified"),
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "load_manual_event_request",
+        lambda *_args: request,
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "interactive_manual_event_presence",
+        lambda request_arg, input_arg, output_arg: proof,
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "approve_manual_event",
+        lambda *args: approved.update(request=args[2], proof=args[3]),
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "ExchangeSessionResolver",
+        lambda: SimpleNamespace(session_close=lambda *_args: now),
+    )
+    monkeypatch.setattr(private_runtime_cli, "_clock", lambda: now)
+    owner_output = TTYBuffer()
+
+    code, stdout, stderr = _capture(
+        lambda: private_runtime_cli.attest_private_event_main(
+            environ={private_runtime_cli.PRIVATE_CONFIG_ENV: "private-sentinel"},
+            input_stream=TTYBuffer(),
+            output_stream=owner_output,
+        )
+    )
+
+    assert code == private_runtime_cli.EXIT_OK
+    assert stdout == stderr == ""
+    assert owner_output.getvalue() == "PRIVATE_MANUAL_EVENT:APPROVED\n"
+    assert approved == {"request": request, "proof": proof}
 
 
 def test_attestation_rejects_non_tty_with_fixed_output(
@@ -379,6 +492,7 @@ def test_daily_schema_only_ledger_never_constructs_outbox(
     ("script_name", "expected_line"),
     [
         ("attest_private_opening.py", "PRIVATE_OPENING_ATTESTATION:CONFIG_OR_PRIVACY_REJECTED\n"),
+        ("attest_private_event.py", "PRIVATE_MANUAL_EVENT:CONFIG_OR_PRIVACY_REJECTED\n"),
         ("initialize_private_daily.py", "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"),
         ("run_private_daily.py", "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"),
     ],
@@ -427,6 +541,28 @@ def test_attestation_script_rejects_arguments_before_import(
     assert stderr == "PRIVATE_OPENING_ATTESTATION:CONFIG_OR_PRIVACY_REJECTED\n"
     assert imported is False
     assert "private-value" not in stderr
+
+
+def test_manual_event_script_rejects_arguments_before_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imported = False
+
+    def load_main():
+        nonlocal imported
+        imported = True
+        return None, 70, "PRIVATE_MANUAL_EVENT:INTERNAL_FAILURE"
+
+    monkeypatch.setattr(manual_event_script, "_load_main", load_main)
+    monkeypatch.setattr(sys, "argv", ["attest_private_event.py", "private-payload"])
+
+    code, stdout, stderr = _capture(manual_event_script._run)
+
+    assert code == private_runtime_cli.EXIT_CONFIG_OR_PRIVACY
+    assert stdout == ""
+    assert stderr == "PRIVATE_MANUAL_EVENT:CONFIG_OR_PRIVACY_REJECTED\n"
+    assert imported is False
+    assert "private-payload" not in stderr
 
 
 def test_attestation_script_import_failure_is_fixed(

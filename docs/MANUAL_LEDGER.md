@@ -165,16 +165,46 @@ actual fill. The ledger changes only after receiving unambiguous side, quantity,
 price, fees and effective time. A suggestion, target amount or silence is not an
 actual trade.
 
-The safe command/API that ingests those later owner-confirmed events is still a
-separate activation blocker. Until it is implemented, live reports must not
-infer a trade from prose, a recommendation or silence.
+Later events use a fixed owner-only staging path; they are never accepted from
+arguments, stdin JSON, environment JSON or natural-language conversation:
+
+```text
+<SERENITY_PRIVATE_ROOT>/manual-event.request.json
+```
+
+The request is a closed `manual_owner_event_request/v1.0.0` JSON object with a
+fresh 32-character lowercase hexadecimal nonce, one exchange session, optional
+UTC occurrence time, one supported event kind and decimal strings for every
+economic number. Supported kinds are `confirmed_fill`, `cash_flow`, `fee`,
+`income`, `split` and `skip_dca`. Symbols and DCA plan identities must match the
+current private configuration. The owner then runs, from a real terminal:
+
+```bash
+python scripts/attest_private_event.py
+```
+
+The random challenge binds confirmation to the exact request-byte digest. The
+command holds the private-runtime lock, rechecks the config, ledger head,
+valuation finality and every unresolved outbox scope, and publishes an
+immutable self-hashed approval. It does not mutate the ledger and cannot place
+an order. `run_private_daily.py` later audits every approval and receipt, writes
+the event through the existing ledger API and publishes a receipt bound to the
+resulting event ID and hash. A crash after ledger commit but before receipt
+publication is recovered by the next idempotent run.
+
+Each event commit is atomic and replay-safe; the entire pending queue is not
+claimed as one database transaction. The runtime nevertheless refuses to value
+or prepare a report until all eligible events for the session have been
+processed. DCA replacements are staged before the run but consumed only after
+that session's modeled DCA settlement and before either book is valued.
 
 An explicit session override can skip the base DCA for a date. A separate
 manual trade does not cancel the base plan by implication. Before valuation,
-corrections are recorded as replacements, owner-event reversals or aggregate
-DCA-batch reversals and replayed from the affected session. After valuation,
-historical corrections require a future restatement/supersession workflow and
-are rejected by this module.
+an owner-confirmed fill may explicitly replace the matching modeled DCA child.
+Lower-level ledger APIs retain owner-event and aggregate DCA-batch reversal
+support, but the v1 staging command intentionally exposes only the six event
+kinds above. After valuation, historical corrections require a future
+restatement/supersession workflow and are rejected.
 
 ## Current boundary
 

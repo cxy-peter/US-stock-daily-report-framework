@@ -448,6 +448,43 @@ class OpeningCheckpoint:
     )
 
 
+@dataclass(frozen=True, repr=False)
+class LedgerEventCheckpoint:
+    """Payload-free identity used to bind private control-file receipts."""
+
+    event_id: str
+    event_hash: str
+    idempotency_key: str
+    session: dt.date
+    event_type: str
+    source_class: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "event_id",
+            _sha256_digest(self.event_id, "ledger checkpoint event id"),
+        )
+        object.__setattr__(
+            self,
+            "event_hash",
+            _sha256_digest(self.event_hash, "ledger checkpoint event hash"),
+        )
+        key = str(self.idempotency_key).strip()
+        event_type = str(self.event_type).strip().lower()
+        source_class = str(self.source_class).strip().lower()
+        if not key or not event_type or source_class not in {
+            "user_confirmed",
+            "modeled",
+            "system",
+        }:
+            raise LedgerIntegrityError("ledger event checkpoint is malformed")
+        object.__setattr__(self, "idempotency_key", key)
+        object.__setattr__(self, "session", _date(self.session))
+        object.__setattr__(self, "event_type", event_type)
+        object.__setattr__(self, "source_class", source_class)
+
+
 @dataclass(frozen=True)
 class CommonLedgerValuation:
     """The two books valued at the same completed session."""
@@ -1633,6 +1670,65 @@ class PortfolioLedger:
                 (normalized_hash,),
             ).fetchone()
             return row is not None
+        finally:
+            connection.close()
+
+    def last_event_hash(self) -> str:
+        """Return the verified current chain head without exposing an event body."""
+
+        connection = self._connect()
+        try:
+            self._verify_hash_chain_connection(connection)
+            self._validated_valuation_chains_connection(connection)
+            row = connection.execute(
+                "SELECT event_hash FROM ledger_events ORDER BY sequence_no DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                raise LedgerNotInitializedError("the ledger has no opening snapshot")
+            return _sha256_digest(row["event_hash"], "ledger chain head")
+        finally:
+            connection.close()
+
+    def latest_valuation_watermark(self) -> dt.date | None:
+        """Return the global finality watermark across either valuation book."""
+
+        connection = self._connect()
+        try:
+            self._verify_hash_chain_connection(connection)
+            self._require_initialized(connection)
+            self._validated_valuation_chains_connection(connection)
+            row = connection.execute(
+                "SELECT MAX(session_date) AS session_date FROM ledger_events "
+                "WHERE event_type = 'valuation'"
+            ).fetchone()
+            raw = None if row is None else row["session_date"]
+            return None if raw is None else _date(raw)
+        finally:
+            connection.close()
+
+    def event_checkpoint(self, event_id: str) -> LedgerEventCheckpoint | None:
+        """Return one payload-free event binding after full chain verification."""
+
+        normalized_id = _sha256_digest(event_id, "event_id")
+        connection = self._connect()
+        try:
+            self._verify_hash_chain_connection(connection)
+            self._validated_valuation_chains_connection(connection)
+            row = connection.execute(
+                "SELECT event_id, event_hash, idempotency_key, session_date, "
+                "event_type, source_class FROM ledger_events WHERE event_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return LedgerEventCheckpoint(
+                event_id=str(row["event_id"]),
+                event_hash=str(row["event_hash"]),
+                idempotency_key=str(row["idempotency_key"]),
+                session=_date(row["session_date"]),
+                event_type=str(row["event_type"]),
+                source_class=str(row["source_class"]),
+            )
         finally:
             connection.close()
 
@@ -3153,6 +3249,7 @@ __all__ = [
     "DcaSkipReceipt",
     "DcaSettlementResult",
     "LedgerAlreadyInitializedError",
+    "LedgerEventCheckpoint",
     "LedgerIdempotencyConflict",
     "LedgerInsufficientCash",
     "LedgerIntegrityError",

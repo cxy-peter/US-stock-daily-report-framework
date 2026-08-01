@@ -15,6 +15,7 @@ import pytest
 
 import scripts.check_private_daily_readiness as readiness_script
 import serenity_monitor.opening_owner_attestation as opening_attestation
+import serenity_monitor.manual_owner_event as manual_owner_event
 import serenity_monitor.private_daily_readiness as readiness
 from serenity_monitor.daily_outbox import (
     DailyReportOutbox,
@@ -74,6 +75,11 @@ class _TTYBuffer(io.StringIO):
 def _allow_attestation_temp_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         opening_attestation,
+        "validate_existing_private_storage_root",
+        lambda paths: paths.root,
+    )
+    monkeypatch.setattr(
+        manual_owner_event,
         "validate_existing_private_storage_root",
         lambda paths: paths.root,
     )
@@ -220,7 +226,7 @@ def test_readiness_contract_is_fixed_redacted_and_separates_activation_gates(
     assert status["provider_credentials"] == "passed"
     assert status["corporate_action_coverage"] == "blocked"
     assert status["opening_owner_attestation"] == "blocked"
-    assert status["manual_event_ingestion"] == "not_implemented"
+    assert status["manual_event_ingestion"] == "not_run"
     assert status["receiver_idempotency"] == "unverified"
     assert "synthetic-target" not in serialized
     assert "present-but-never-rendered" not in serialized
@@ -499,7 +505,7 @@ def test_outbox_readonly_audit_does_not_change_database_or_create_sidecars(
     assert {item.name for item in tmp_path.iterdir()} == before_files
 
 
-def test_pending_delivery_is_independent_of_provider_ledger_and_prepare_gates(
+def test_pending_delivery_without_a_current_ledger_head_is_not_sendable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -507,7 +513,6 @@ def test_pending_delivery_is_independent_of_provider_ledger_and_prepare_gates(
     root.mkdir()
     paths = _paths(root)
     outbox = DailyReportOutbox(paths.outbox_database)
-    _enqueue(outbox, target=OTHER_TARGET)
     _enqueue(outbox, target=TARGET)
     _checkpoint(paths.outbox_database)
     monkeypatch.setattr(
@@ -533,8 +538,8 @@ def test_pending_delivery_is_independent_of_provider_ledger_and_prepare_gates(
 
     assert result.outbox_state == "pending_delivery"
     assert result.operational_state == "pending_delivery"
-    assert result.next_safe_action == "deliver"
-    assert result.ready_for_delivery is True
+    assert result.next_safe_action == "operator_review"
+    assert result.ready_for_delivery is False
     assert result.ready_for_initialize is False
     assert result.ready_for_prepare is False
     assert result.workflow_activation_allowed is False
@@ -542,10 +547,14 @@ def test_pending_delivery_is_independent_of_provider_ledger_and_prepare_gates(
     assert checks["provider_credentials"].status == "blocked"
     assert checks["ledger_integrity"].status == "not_run"
     assert checks["corporate_action_coverage"].status == "blocked"
-    assert checks["receiver_idempotency"].status == "passed"
+    assert checks["receiver_idempotency"].status == "blocked"
+    assert (
+        checks["receiver_idempotency"].reason_code
+        == "prepared_report_ledger_head_stale"
+    )
 
 
-def test_unrelated_receiver_pending_is_ignored_after_full_outbox_verification(
+def test_unrelated_receiver_pending_is_a_cross_scope_conflict(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "outbox.sqlite3"
@@ -560,7 +569,7 @@ def test_unrelated_receiver_pending_is_ignored_after_full_outbox_verification(
         delivery_date=NOW.date(),
     )
 
-    assert audit.state == "empty"
+    assert audit.state == "conflict"
 
 
 def test_sending_delivery_requires_reconciliation_not_blind_retry(
@@ -633,7 +642,7 @@ def test_retryable_delivery_requires_the_original_idempotency_scope(
     assert result.operational_state == "pending_delivery"
     assert result.next_safe_action == "operator_review"
     checks = {item.check_id: item for item in result.checks}
-    assert checks["receiver_idempotency"].reason_code == "receiver_retry_scope_mismatch"
+    assert checks["receiver_idempotency"].reason_code == "prepared_report_ledger_head_stale"
 
 
 def test_multiple_unresolved_dates_are_a_conflict(tmp_path: Path) -> None:

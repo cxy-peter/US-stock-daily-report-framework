@@ -142,11 +142,16 @@ Opening owner attestation is implemented and audited, but it does not by itself
 authorize recurring delivery. The public framework still reports these gates
 as incomplete until separately implemented and verified:
 
-- safe owner-confirmed manual-event ingestion;
 - a receiver adapter with verified idempotency or delivery lookup;
 - a persisted live accepted-close/end-to-end trial; and
 - product-level confirmation that one paused automation is uniquely targeted
   before it is activated.
+
+Owner-confirmed manual-event ingestion is now implemented. Readiness reports
+`manual_event_ingestion_available` when its owner-only queue is empty and valid,
+`owner_event_pending_consumption` when an approved item is waiting for the daily
+runtime, and blocks on an unapproved request, valuation-finality violation or
+approval/receipt integrity failure. The command still performs no mutation.
 
 Therefore this checker does not itself authorize or enable a daily task. A
 future deployment adapter must provide those proofs through an auditable,

@@ -21,7 +21,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from .private_daily_markdown import render_private_daily_markdown
 from .private_daily_report import (
@@ -80,6 +80,10 @@ class OutboxCapabilityError(DailyOutboxError):
 
 class OutboxIntegrityError(DailyOutboxError):
     """Raised when persisted report or attempt state violates the contract."""
+
+
+class OutboxLedgerMutationBlocked(DailyOutboxError):
+    """Raised when unresolved delivery state forbids a later ledger mutation."""
 
 
 @dataclass(frozen=True)
@@ -947,6 +951,45 @@ class DailyReportOutbox:
             ledger_last_event_hash=ledger_hash,
             delivery_date=record.delivery_date,
         )
+
+    def require_ledger_mutation_allowed(
+        self,
+        contains_event_hash: Callable[[str], bool],
+    ) -> None:
+        """Verify every row before permitting an owner or modeled ledger append.
+
+        The check intentionally spans every receiver scope in the database.  A
+        target rotation must not hide an older prepared, leased, ambiguous or
+        retryable report.  Every delivered row must also reference a checkpoint
+        that remains in the caller's current append-only ledger chain.
+        """
+
+        if not callable(contains_event_hash):
+            raise OutboxValidationError("contains_event_hash must be callable")
+        with self._connect() as connection:
+            rows = self._verified_rows(connection)
+        unresolved = [
+            record
+            for record, _report in rows
+            if record.status in {
+                "prepared",
+                "sending",
+                "delivery_unknown",
+                "retryable",
+            }
+        ]
+        if unresolved:
+            raise OutboxLedgerMutationBlocked(
+                "unresolved delivery state blocks ledger mutation"
+            )
+        for record, _report in rows:
+            if record.status != "delivered":  # pragma: no cover - schema guard
+                raise OutboxIntegrityError("outbox row has an unknown terminal state")
+            checkpoint = record.ledger_last_event_hash
+            if checkpoint is None or not contains_event_hash(checkpoint):
+                raise OutboxIntegrityError(
+                    "delivered report checkpoint is absent from the current ledger chain"
+                )
 
     def oldest_pending(
         self,
@@ -1969,6 +2012,7 @@ __all__ = [
     "OutboxCapabilityError",
     "OutboxIdempotencyConflict",
     "OutboxIntegrityError",
+    "OutboxLedgerMutationBlocked",
     "OutboxLeaseError",
     "OutboxContent",
     "OutboxRecord",

@@ -16,6 +16,7 @@ from serenity_monitor.daily_outbox import (
     OutboxCapabilityError,
     OutboxIdempotencyConflict,
     OutboxIntegrityError,
+    OutboxLedgerMutationBlocked,
     OutboxLeaseError,
     OutboxStateError,
     OutboxValidationError,
@@ -443,6 +444,34 @@ def test_oldest_pending_is_chronological_not_insertion_order(tmp_path: Path) -> 
     assert pending is not None
     assert pending.delivery_id == earlier.delivery_id
     assert pending.delivery_id != later.delivery_id
+
+
+def test_ledger_mutation_barrier_spans_every_receiver_scope(tmp_path: Path) -> None:
+    outbox = _outbox(tmp_path)
+    other_target = TARGET + "-rotated"
+    outbox.enqueue(_report(target=other_target), other_target, LEDGER_HASH, now=NOW)
+
+    with pytest.raises(OutboxLedgerMutationBlocked):
+        outbox.require_ledger_mutation_allowed(lambda _event_hash: True)
+
+
+def test_ledger_mutation_barrier_requires_delivered_checkpoint_in_chain(
+    tmp_path: Path,
+) -> None:
+    outbox = _outbox(tmp_path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+    claim = outbox.claim(result.delivery_id, IDEMPOTENT, now=NOW)
+    outbox.mark_delivered(
+        result.delivery_id,
+        claim.lease_token,
+        delivered_at=NOW + dt.timedelta(seconds=1),
+    )
+
+    outbox.require_ledger_mutation_allowed(
+        lambda event_hash: event_hash == LEDGER_HASH
+    )
+    with pytest.raises(OutboxIntegrityError, match="current ledger chain"):
+        outbox.require_ledger_mutation_allowed(lambda _event_hash: False)
 
 
 def test_load_validated_content_is_identity_only_and_repr_redacted(

@@ -9,13 +9,23 @@ import warnings
 from pathlib import Path
 from typing import Mapping, TextIO
 
-from .daily_outbox import DailyOutboxError, DailyReportOutbox
+from .daily_outbox import (
+    DailyOutboxError,
+    DailyReportOutbox,
+    OutboxLedgerMutationBlocked,
+)
 from .opening_owner_attestation import (
     OpeningLedgerBinding,
     OpeningOwnerAttestationError,
     audit_opening_owner_attestation,
     create_opening_owner_claim,
     interactive_owner_presence,
+)
+from .manual_owner_event import (
+    ManualOwnerEventError,
+    approve_manual_event,
+    interactive_manual_event_presence,
+    load_manual_event_request,
 )
 from .portfolio_ledger import (
     LedgerNotInitializedError,
@@ -54,7 +64,7 @@ from .provider_registry import (
     ProviderRegistry,
     TwelveDataCloseProvider,
 )
-from .trading_calendar import ExchangeSessionResolver
+from .trading_calendar import ExchangeSessionError, ExchangeSessionResolver
 
 
 PRIVATE_CONFIG_ENV = "SERENITY_PRIVATE_CONFIG"
@@ -87,6 +97,17 @@ _ATTESTATION_ERROR_LINES = {
     EXIT_PERSISTENCE: "PRIVATE_OPENING_ATTESTATION:PERSISTENCE_FAILED",
     EXIT_INTERNAL: "PRIVATE_OPENING_ATTESTATION:INTERNAL_FAILURE",
     EXIT_INTERRUPTED: "PRIVATE_OPENING_ATTESTATION:INTERRUPTED",
+}
+
+_MANUAL_EVENT_ERROR_LINES = {
+    EXIT_BUSY: "PRIVATE_MANUAL_EVENT:BUSY",
+    EXIT_CONFIG_OR_PRIVACY: "PRIVATE_MANUAL_EVENT:CONFIG_OR_PRIVACY_REJECTED",
+    EXIT_NOT_INITIALIZED: "PRIVATE_MANUAL_EVENT:NOT_INITIALIZED",
+    EXIT_INTEGRITY: "PRIVATE_MANUAL_EVENT:INTEGRITY_REJECTED",
+    EXIT_PERSISTENCE: "PRIVATE_MANUAL_EVENT:PERSISTENCE_FAILED",
+    EXIT_DELIVERY_PENDING: "PRIVATE_MANUAL_EVENT:PRIOR_DELIVERY_PENDING",
+    EXIT_INTERNAL: "PRIVATE_MANUAL_EVENT:INTERNAL_FAILURE",
+    EXIT_INTERRUPTED: "PRIVATE_MANUAL_EVENT:INTERRUPTED",
 }
 
 
@@ -143,8 +164,12 @@ def _map_exception(exc: BaseException) -> int:
         return EXIT_CONFIG_OR_PRIVACY
     if isinstance(exc, OpeningOwnerAttestationError):
         return EXIT_INTEGRITY
+    if isinstance(exc, ManualOwnerEventError):
+        return EXIT_INTEGRITY
     if isinstance(exc, PrivateDailyNotInitialized):
         return EXIT_NOT_INITIALIZED
+    if isinstance(exc, OutboxLedgerMutationBlocked):
+        return EXIT_DELIVERY_PENDING
     if isinstance(
         exc,
         (
@@ -330,6 +355,124 @@ def attest_private_opening_main(
         return code if code in _ATTESTATION_ERROR_LINES else EXIT_INTERNAL
 
 
+def attest_private_event_main(
+    *,
+    environ: Mapping[str, str] | None = None,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> int:
+    """Approve one fixed owner-only request; never ingest prose or submit an order."""
+
+    environment = os.environ if environ is None else environ
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            config, config_bytes_sha256 = _load_live_config_bundle(environment)
+            paths = resolve_private_runtime_paths(config, environment)
+            owner_input = sys.stdin if input_stream is None else input_stream
+            owner_output = sys.stderr if output_stream is None else output_stream
+            with private_runtime_lock(paths.lock_file):
+                if not os.path.lexists(str(paths.ledger_database)):
+                    raise PrivateDailyNotInitialized("private_ledger_not_initialized")
+                calendar = ExchangeSessionResolver()
+                ledger = PortfolioLedger(
+                    paths.ledger_database,
+                    policy=config.ledger_policy,
+                    calendar_resolver=calendar,
+                )
+                try:
+                    checkpoint = ledger.opening_checkpoint()
+                except LedgerNotInitializedError as exc:
+                    raise PrivateDailyNotInitialized(
+                        "private_ledger_not_initialized"
+                    ) from exc
+                opening_audit = audit_opening_owner_attestation(
+                    config,
+                    paths,
+                    config_bytes_sha256=config_bytes_sha256,
+                    now=_clock(),
+                    ledger_binding=OpeningLedgerBinding(
+                        opening_event_id=checkpoint.opening_event_id,
+                        opening_event_hash=checkpoint.opening_event_hash,
+                        idempotency_key=checkpoint.idempotency_key,
+                        created_at=checkpoint.created_at,
+                    ),
+                )
+                if opening_audit.state != "consumed_verified":
+                    raise PrivateDailyIntegrityError(
+                        "opening_owner_attestation_not_consumed"
+                    )
+                if ledger.latest_common_valuation() is None:
+                    raise PrivateDailyNotInitialized(
+                        "opening_valuations_not_initialized"
+                    )
+                request = load_manual_event_request(config, paths)
+                # Validate that the declared session exists without requiring
+                # it to have closed yet; a future explicit DCA skip is valid.
+                try:
+                    calendar.session_close(request.session, config.primary_mic)
+                except ExchangeSessionError as exc:
+                    raise ManualOwnerEventError(
+                        "manual_event_exchange_session_invalid"
+                    ) from exc
+                observed = _clock()
+                if (
+                    request.occurred_at is not None
+                    and request.occurred_at > observed + dt.timedelta(seconds=30)
+                ):
+                    raise ManualOwnerEventError("manual_event_time_in_future")
+                watermark = ledger.latest_valuation_watermark()
+                if watermark is not None and request.session <= watermark:
+                    raise ManualOwnerEventError(
+                        "manual_event_after_valuation_finality"
+                    )
+                if os.path.lexists(str(paths.outbox_database)):
+                    outbox = DailyReportOutbox(paths.outbox_database)
+                    outbox.require_ledger_mutation_allowed(
+                        ledger.contains_event_hash,
+                    )
+                request_head = ledger.last_event_hash()
+                proof = interactive_manual_event_presence(
+                    request,
+                    owner_input,
+                    owner_output,
+                )
+                # Re-read the exact config and all mutable gates while still
+                # holding the shared runtime lock.  The approval function then
+                # re-reads and digest-compares the fixed request itself.
+                reloaded, reloaded_digest = _load_live_config_bundle(environment)
+                if reloaded_digest != config_bytes_sha256 or reloaded != config:
+                    raise ManualOwnerEventError(
+                        "manual_event_config_changed_after_confirmation"
+                    )
+                if ledger.last_event_hash() != request_head:
+                    raise ManualOwnerEventError(
+                        "manual_event_ledger_changed_after_confirmation"
+                    )
+                if os.path.lexists(str(paths.outbox_database)):
+                    outbox.require_ledger_mutation_allowed(
+                        ledger.contains_event_hash,
+                    )
+                approve_manual_event(
+                    config,
+                    paths,
+                    request,
+                    proof,
+                    _clock,
+                )
+            owner_output.write("PRIVATE_MANUAL_EVENT:APPROVED\n")
+            owner_output.flush()
+            return EXIT_OK
+    except BaseException as exc:
+        code = _map_exception(exc)
+        line = _MANUAL_EVENT_ERROR_LINES.get(
+            code,
+            _MANUAL_EVENT_ERROR_LINES[EXIT_INTERNAL],
+        )
+        sys.stderr.write(line + "\n")
+        return code if code in _MANUAL_EVENT_ERROR_LINES else EXIT_INTERNAL
+
+
 __all__ = [
     "EXIT_BUSY",
     "EXIT_CONFIG_OR_PRIVACY",
@@ -342,6 +485,7 @@ __all__ = [
     "EXIT_PERSISTENCE",
     "PRIVATE_CONFIG_ENV",
     "attest_private_opening_main",
+    "attest_private_event_main",
     "initialize_private_daily_main",
     "run_private_daily_main",
 ]

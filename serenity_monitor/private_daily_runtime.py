@@ -1,9 +1,10 @@
 """Private, manual-only daily accounting orchestration.
 
-The runtime never connects to a broker and never records an owner-confirmed
-trade.  It projects an immutable base DCA plan at accepted official closes,
-keeps confirmed and modeled books separate, and prepares one owner-only report
-through the durable outbox.
+The runtime never connects to a broker or infers a trade from prose or silence.
+It may consume only an immutable event envelope that the owner approved through
+the separate random TTY challenge.  It projects an immutable base DCA plan at
+accepted official closes, keeps confirmed and modeled books separate, and
+prepares one owner-only report through the durable outbox.
 """
 from __future__ import annotations
 
@@ -15,6 +16,13 @@ from typing import Any, Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from .daily_outbox import DailyReportOutbox
+from .manual_owner_event import (
+    ManualEventApproval,
+    ManualOwnerEventError,
+    load_manual_event_queue,
+    publish_manual_event_receipt,
+    record_approved_event,
+)
 from .opening_owner_attestation import (
     OpeningLedgerBinding,
     OpeningOwnerAttestationError,
@@ -809,6 +817,60 @@ def initialize_private_ledger(
     )
 
 
+def _manual_approvals_by_session(
+    approvals: Sequence[ManualEventApproval],
+) -> dict[dt.date, tuple[ManualEventApproval, ...]]:
+    grouped: dict[dt.date, list[ManualEventApproval]] = {}
+    replacement_keys: set[tuple[dt.date, str]] = set()
+    for approval in approvals:
+        grouped.setdefault(approval.session, []).append(approval)
+        if approval.phase == "post_dca_replacement":
+            key = (approval.session, str(approval.request.payload["symbol"]))
+            if key in replacement_keys:
+                raise PrivateDailyIntegrityError(
+                    "duplicate_manual_dca_replacement"
+                )
+            replacement_keys.add(key)
+    return {
+        session: tuple(
+            sorted(
+                items,
+                key=lambda item: (
+                    1 if item.phase == "post_dca_replacement" else 0,
+                    item.request.occurred_at
+                    or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
+                    item.event_nonce,
+                ),
+            )
+        )
+        for session, items in grouped.items()
+    }
+
+
+def _record_manual_approval(
+    approval: ManualEventApproval,
+    *,
+    ledger: PortfolioLedger,
+    config: PrivateDailyRuntimeConfig,
+    runtime_paths: PrivateRuntimePaths,
+    clock: Clock,
+    modeled_replacement_event_id: str | None = None,
+) -> None:
+    try:
+        receipt = record_approved_event(
+            approval,
+            ledger,
+            config,
+            modeled_replacement_event_id=modeled_replacement_event_id,
+            clock=clock,
+        )
+        publish_manual_event_receipt(runtime_paths, receipt)
+    except ManualOwnerEventError as exc:
+        raise PrivateDailyIntegrityError(
+            "manual_owner_event_recording_failed"
+        ) from exc
+
+
 class PrivateDailyRuntime:
     """Prepare exactly one private report without executing any trade."""
 
@@ -890,6 +952,8 @@ class PrivateDailyRuntime:
                 or not self.ledger.contains_event_hash(
                     same_day.ledger_last_event_hash
                 )
+                or same_day.ledger_last_event_hash
+                != self.ledger.last_event_hash()
             ):
                 raise PrivateDailyIntegrityError(
                     "same_day_report_not_in_current_ledger_chain"
@@ -921,6 +985,8 @@ class PrivateDailyRuntime:
                 or not self.ledger.contains_event_hash(
                     pending.ledger_last_event_hash
                 )
+                or pending.ledger_last_event_hash
+                != self.ledger.last_event_hash()
             ):
                 raise PrivateDailyIntegrityError(
                     "pending_report_not_in_current_ledger_chain"
@@ -967,6 +1033,50 @@ class PrivateDailyRuntime:
         if last_reported < self.config.opening.session:
             raise PrivateDailyIntegrityError("delivered_checkpoint_precedes_opening")
 
+        # Validate the entire outbox, not only the current receiver scope,
+        # before any owner event, modeled DCA or valuation can append to the
+        # ledger.  This prevents a target rotation from hiding stale prepared
+        # or ambiguous content behind a different target digest.
+        self.outbox.require_ledger_mutation_allowed(
+            self.ledger.contains_event_hash,
+        )
+
+        manual_approvals: tuple[ManualEventApproval, ...] = ()
+        if not self.config.simulation:
+            if self.runtime_paths is None:  # pragma: no cover - opening guard
+                raise PrivateDailyIntegrityError(
+                    "manual_owner_event_runtime_boundary_missing"
+                )
+            try:
+                manual_approvals = load_manual_event_queue(
+                    self.config,
+                    self.runtime_paths,
+                    self.ledger.event_checkpoint,
+                    self.ledger.latest_valuation_watermark(),
+                )
+                for approval in manual_approvals:
+                    self.calendar.session_close(
+                        approval.session,
+                        self.config.primary_mic,
+                    )
+                    if approval.approved_at > started_at + dt.timedelta(seconds=30):
+                        raise ManualOwnerEventError(
+                            "manual_event_approval_time_in_future"
+                        )
+                    if (
+                        approval.request.occurred_at is not None
+                        and approval.request.occurred_at
+                        > started_at + dt.timedelta(seconds=30)
+                    ):
+                        raise ManualOwnerEventError(
+                            "manual_event_time_in_future"
+                        )
+            except (ManualOwnerEventError, ExchangeSessionError) as exc:
+                raise PrivateDailyIntegrityError(
+                    "manual_owner_event_queue_invalid"
+                ) from exc
+        manual_by_session = _manual_approvals_by_session(manual_approvals)
+
         latest_session = self.calendar.last_completed_session(
             started_at,
             self.config.primary_mic,
@@ -1009,7 +1119,20 @@ class PrivateDailyRuntime:
                 if universe is None:
                     block_reason = "instrument_identity_missing"
                     break
-                estimated_alpha_calls += len(universe)
+                prospective_symbols = {
+                    item.canonical_symbol for item in universe
+                }
+                prospective_symbols.update(
+                    str(approval.request.payload["symbol"])
+                    for approval in manual_by_session.get(session, ())
+                    if approval.event_kind in {
+                        "confirmed_fill",
+                        "income",
+                        "split",
+                    }
+                    and approval.request.payload.get("symbol") is not None
+                )
+                estimated_alpha_calls += len(prospective_symbols)
             if (
                 block_reason is None
                 and estimated_alpha_calls > _ALPHA_VANTAGE_FREE_DAILY_BUDGET
@@ -1036,6 +1159,39 @@ class PrivateDailyRuntime:
                     }
                 )
                 continue
+
+            session_manual = manual_by_session.get(session, ())
+            pre_dca_manual = tuple(
+                item for item in session_manual if item.phase == "pre_dca"
+            )
+            post_dca_manual = tuple(
+                item
+                for item in session_manual
+                if item.phase == "post_dca_replacement"
+            )
+            if pre_dca_manual:
+                if self.runtime_paths is None:  # pragma: no cover - live guard
+                    raise PrivateDailyIntegrityError(
+                        "manual_owner_event_runtime_boundary_missing"
+                    )
+                for approval in pre_dca_manual:
+                    _record_manual_approval(
+                        approval,
+                        ledger=self.ledger,
+                        config=self.config,
+                        runtime_paths=self.runtime_paths,
+                        clock=self.clock,
+                    )
+                source_health.append(
+                    {
+                        "source_id": f"manual_owner_events.pre.{session.isoformat()}",
+                        "source_type": "ledger",
+                        "status": "accepted",
+                        "required": True,
+                        "observed_at": _utc_text(started_at),
+                        "detail_code": "owner_confirmed_events_applied_pre_dca",
+                    }
+                )
 
             universe = _instrument_universe(self.config, self.ledger, session)
             if universe is None:
@@ -1191,6 +1347,48 @@ class PrivateDailyRuntime:
                 continue
             except LedgerSettlementBlocked as exc:
                 raise PrivateDailyIntegrityError("unexpected_ledger_settlement_block") from exc
+
+            if post_dca_manual:
+                if self.runtime_paths is None:  # pragma: no cover - live guard
+                    raise PrivateDailyIntegrityError(
+                        "manual_owner_event_runtime_boundary_missing"
+                    )
+                if (
+                    settlement.status != "settled"
+                    or settlement.plan_id != self.config.dca_plan.plan_id
+                    or settlement.plan_version != self.config.dca_plan.version
+                ):
+                    raise PrivateDailyIntegrityError(
+                        "manual_dca_replacement_without_settlement"
+                    )
+                replacements = settlement.receipts_by_symbol
+                for approval in post_dca_manual:
+                    symbol = str(approval.request.payload["symbol"])
+                    modeled = replacements.get(symbol)
+                    if modeled is None:
+                        raise PrivateDailyIntegrityError(
+                            "manual_dca_replacement_symbol_missing"
+                        )
+                    _record_manual_approval(
+                        approval,
+                        ledger=self.ledger,
+                        config=self.config,
+                        runtime_paths=self.runtime_paths,
+                        clock=self.clock,
+                        modeled_replacement_event_id=(
+                            modeled.settlement_event_id
+                        ),
+                    )
+                source_health.append(
+                    {
+                        "source_id": f"manual_owner_events.post.{session.isoformat()}",
+                        "source_type": "ledger",
+                        "status": "accepted",
+                        "required": True,
+                        "observed_at": _utc_text(started_at),
+                        "detail_code": "owner_reported_dca_replacements_applied",
+                    }
+                )
 
             confirmed = self.ledger.record_valuation("confirmed", valuation_batch)
             modeled = self.ledger.record_valuation("modeled", valuation_batch)

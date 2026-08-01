@@ -13,6 +13,7 @@ import pytest
 from serenity_monitor.portfolio_ledger import (
     DcaPlan,
     LedgerAlreadyInitializedError,
+    LedgerEventCheckpoint,
     LedgerIdempotencyConflict,
     LedgerInsufficientCash,
     LedgerIntegrityError,
@@ -56,6 +57,28 @@ def test_opening_checkpoint_keeps_the_original_public_constructor_shape() -> Non
         1,
         tzinfo=dt.timezone.utc,
     )
+
+
+def test_event_checkpoint_is_payload_free_and_hash_verified(tmp_path: Path) -> None:
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite3")
+    event_id = ledger.initialize(
+        SESSION_0,
+        Decimal("100"),
+        idempotency_key="private-opening-sentinel",
+    )
+
+    checkpoint = ledger.event_checkpoint(event_id)
+
+    assert isinstance(checkpoint, LedgerEventCheckpoint)
+    assert checkpoint.event_id == event_id
+    assert checkpoint.event_type == "opening_snapshot"
+    assert checkpoint.source_class == "user_confirmed"
+    assert checkpoint.session == SESSION_0
+    assert ledger.contains_event_hash(checkpoint.event_hash)
+    assert ledger.last_event_hash() == checkpoint.event_hash
+    assert ledger.latest_valuation_watermark() is None
+    assert "private-opening-sentinel" not in repr(checkpoint)
+    assert ledger.event_checkpoint("f" * 64) is None
 
 
 def _digest(value: object) -> str:
@@ -815,6 +838,8 @@ def test_valuation_lineage_prior_values_and_public_recovery_api(tmp_path):
     assert partial.valuation_state == "partial"
     assert partial.has_partial_valuation is True
     assert ledger.latest_common_valuation_session() == SESSION_0
+    assert ledger.latest_valuation_watermark() == SESSION_1
+    assert ledger.last_event_hash() == partial.last_event_hash
 
     modeled = ledger.record_valuation("modeled", session_close)
     assert confirmed.prior_nav == confirmed_opening.nav
