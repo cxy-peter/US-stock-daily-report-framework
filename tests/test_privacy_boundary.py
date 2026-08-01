@@ -4,7 +4,7 @@ import datetime as dt
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 import yaml
@@ -25,6 +25,7 @@ from scripts.check_public_privacy import (
     _validate_public_markdown,
     _validate_public_provenance,
     _validate_xhs_example,
+    _is_runtime_output_path,
 )
 
 
@@ -175,6 +176,23 @@ def test_privacy_scanner_covers_all_ignored_private_roots():
         'path.name.startswith(".env.")',
     ):
         assert protected in scanner
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "daily-outbox.sqlite3",
+        "daily-outbox.sqlite3-wal",
+        "daily_report.json",
+        "daily_report_2026-08-01.md",
+        "report_2026-08-01.csv",
+        "latest.md",
+        "state.json",
+        "source_health.json",
+    ],
+)
+def test_privacy_scanner_recognizes_runtime_outputs(relative):
+    assert _is_runtime_output_path(PurePosixPath(relative))
 
 
 def _init_temp_git_repo(path: Path) -> None:

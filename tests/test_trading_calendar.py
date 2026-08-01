@@ -14,15 +14,27 @@ def resolver() -> ExchangeSessionResolver:
     return ExchangeSessionResolver()
 
 
-def test_calendar_provenance_preserves_nasdaq_mic_and_pinned_version(resolver):
+def test_calendar_provenance_preserves_canonical_nasdaq_mic_and_pinned_version(resolver):
     xnas = resolver.provenance("XNAS")
     alias = resolver.provenance("NASDAQ")
 
     assert xnas.instrument_mic == "XNAS"
-    assert alias.instrument_mic == "NASDAQ"
+    assert alias.instrument_mic == "XNAS"
     assert xnas.calendar_name == alias.calendar_name == "XNYS"
     assert xnas.calendar_version == resolver.calendar_version == "4.13.2"
     assert xnas.exchange_timezone == "America/New_York"
+
+
+def test_calendar_provenance_normalizes_nyse_arca_alias_to_canonical_mic(resolver):
+    arcx = resolver.provenance("ARCX")
+    alias = resolver.provenance("NYSEARCA")
+
+    assert arcx.instrument_mic == "ARCX"
+    assert alias.instrument_mic == "ARCX"
+    assert arcx.calendar_name == alias.calendar_name == "XNYS"
+    assert resolver.session_close("2026-07-31", "ARCX") == dt.datetime(
+        2026, 7, 31, 20, 0, tzinfo=dt.timezone.utc
+    )
 
 
 def test_dst_spring_and_fall_change_utc_close_without_changing_local_close(resolver):

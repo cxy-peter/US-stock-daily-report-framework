@@ -79,6 +79,11 @@ PUBLIC_TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+RUNTIME_OUTPUT_NAME = re.compile(
+    r"(?i)^(?:daily_report(?:_[0-9]{4}-[0-9]{2}-[0-9]{2})?|"
+    r"report_[0-9]{4}-[0-9]{2}-[0-9]{2}|latest|state|source_health)"
+    r"\.(?:json|md|csv)$"
+)
 
 
 def _tracked_files() -> set[str]:
@@ -93,6 +98,42 @@ def _tracked_files() -> set[str]:
         for value in result.stdout.split(b"\0")
         if value
     }
+
+
+def _tracked_modes() -> dict[str, str]:
+    result = subprocess.run(
+        ["git", "ls-files", "-s", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    modes: dict[str, str] = {}
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        header, raw_path = record.split(b"\t", 1)
+        mode = header.split(b" ", 1)[0].decode("ascii")
+        modes[raw_path.decode("utf-8")] = mode
+    return modes
+
+
+def _is_runtime_output_path(path: PurePosixPath) -> bool:
+    name = path.name.casefold()
+    if name.endswith(
+        (
+            ".sqlite",
+            ".sqlite3",
+            ".sqlite-wal",
+            ".sqlite-shm",
+            ".sqlite3-wal",
+            ".sqlite3-shm",
+            ".db",
+            ".db-wal",
+            ".db-shm",
+        )
+    ):
+        return True
+    return bool(RUNTIME_OUTPUT_NAME.fullmatch(path.name))
 
 
 def _index_text(relative: str) -> str:
@@ -167,6 +208,7 @@ def _validate_public_provenance(text: str) -> None:
 
 def check_public_tree() -> None:
     tracked = _tracked_files()
+    tracked_modes = _tracked_modes()
     forbidden_exact = {
         "config/portfolio.yaml",
         "config/manual_external_views.yaml",
@@ -178,6 +220,10 @@ def check_public_tree() -> None:
 
     for raw in tracked:
         path = PurePosixPath(raw)
+        if tracked_modes.get(raw) == "120000":
+            _fail("tracked symbolic links are forbidden in the public framework")
+        if _is_runtime_output_path(path):
+            _fail("a private runtime database or report output is tracked")
         if ".private." in path.name:
             _fail("a private-named file is tracked")
         if path.parts and path.parts[0] in {

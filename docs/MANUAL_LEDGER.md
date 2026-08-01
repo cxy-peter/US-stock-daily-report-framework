@@ -73,12 +73,13 @@ event.
 
 Exchange-session resolution is pinned to
 [`exchange-calendars` 4.13.2](https://pypi.org/project/exchange-calendars/4.13.2/).
-The engine preserves an instrument's `XNAS` or `XNYS` MIC while using the
-library's XNYS schedule for both U.S. venues. It compares the timezone-aware run
-instant with the calendar's UTC close, so DST, holidays and half days are not
-approximated with weekdays or fixed clock offsets. Exchange close completion
-does not prove provider EOD availability; the accepted-close gate remains
-separate. Calendar upgrades must be reviewed against the
+The engine preserves an instrument's canonical `XNAS`, `XNYS` or NYSE Arca
+`ARCX` MIC while using the library's XNYS schedule for these U.S. equity
+venues. It compares the timezone-aware run instant with the calendar's UTC
+close, so DST, holidays and half days are not approximated with weekdays or
+fixed clock offsets. Exchange close completion does not prove provider EOD
+availability; the accepted-close gate remains separate. Calendar upgrades
+must be reviewed against the
 [NYSE hours calendar](https://www.nyse.com/markets/hours-calendars) and
 [Nasdaq Trader calendar](https://www.nasdaqtrader.com/trader.aspx?id=Calendar).
 
