@@ -15,6 +15,7 @@ point-in-time sources
 + source/claim/fragility/manipulation gates
 + accepted-close consensus
 + confirmed and modeled books
++ read-only broker reconciliation
 + objective market stress
 + Social Heat and prediction calibration
 + fund/product monitoring
@@ -44,6 +45,7 @@ public framework repository
 owner-only local runtime
 ├── private configuration
 ├── accepted-close cache
+├── broker reconciliation evidence
 ├── portfolio and prediction ledgers
 ├── delivery outbox
 └── private reports
@@ -63,11 +65,18 @@ the separate private deployment role.
 - U.S. exchange calendar with holidays, DST and early closes;
 - append-only confirmed/modeled portfolio ledger;
 - owner-attested fills, cash flows, income, fees, splits and DCA skips;
+- read-only IBKR Flex v3 client, parser and reconciliation result model;
 - versioned private daily-report JSON and deterministic Chinese Markdown;
 - local immutable delivery outbox and readiness audit;
 - Social Heat with separate attention/execution weights and a 5% total cap;
 - append-only 1/5/20/60-session prediction research ledger;
 - institutional U.S. fund/product Skill and offline fund monitor.
+
+The IBKR Flex library can parse account summaries, positions, trades, cash
+transactions, fees and corporate actions and compare positions/cash with the
+confirmed book. It cannot change the ledger or place an order. A private live
+query and daily-runtime adapter remain deployment work. See
+[`docs/IBKR_FLEX_RECONCILIATION.md`](docs/IBKR_FLEX_RECONCILIATION.md).
 
 ## Pro research suite
 
@@ -132,19 +141,21 @@ readiness audit
 -> owner opening attestation
 -> ledger initialization
 -> dual-source accepted close
+-> read-only IBKR reconciliation
 -> private report preparation
 -> verified receiver delivery
 -> same-day replay without duplication
 ```
 
-Production activation remains blocked until a receiver with idempotency or
-lookup is verified and a persisted live end-to-end trial succeeds. Read
+Production activation remains blocked until a private IBKR reconciliation trial,
+a receiver with idempotency or lookup, and a persisted live end-to-end report
+trial succeed. Read
 [`docs/PRIVATE_DAILY_ACTIVATION.md`](docs/PRIVATE_DAILY_ACTIVATION.md) before
 using any mutating private-runtime command.
 
 ## Still not production-complete
 
-- read-only IBKR Flex reconciliation;
+- private live IBKR Flex query configuration and ledger-queue integration;
 - verified GPT receiver and recurring private delivery;
 - production White House/Trump and Polymarket collectors;
 - automated corporate-action reconciliation;
