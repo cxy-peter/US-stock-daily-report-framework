@@ -112,7 +112,8 @@ def _make_manual_directories(paths: PrivateRuntimePaths) -> None:
         secure_create_owner_only_directory(paths.manual_event_approved_directory, parents=False)
         secure_create_owner_only_directory(paths.manual_event_receipt_directory, parents=False)
     else:
-        paths.manual_event_approved_directory.mkdir(parents=True, mode=0o700)
+        paths.manual_event_directory.mkdir(mode=0o700)
+        paths.manual_event_approved_directory.mkdir(mode=0o700)
         paths.manual_event_receipt_directory.mkdir(mode=0o700)
 
 
