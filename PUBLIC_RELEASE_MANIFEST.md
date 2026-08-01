@@ -15,13 +15,18 @@
 - HXC context with an explicitly labelled KWEB ETF fallback;
 - private-runtime China retail attention and objective-market JSON audit artifacts;
 - raw-close consensus from Twelve Data and Alpha Vantage with an atomic
-  accepted-close price gate;
+  accepted-close price gate, documented exact-date Twelve Data requests and
+  rejected-observation source-health handling;
 - pinned U.S. exchange-calendar resolution for holidays, DST and early closes;
 - an offline append-only confirmed/modeled portfolio ledger with atomic base
   DCA, owner-event corrections, accepted-close valuation and TWR;
-- a closed, versioned private daily-report JSON contract, deterministic Chinese
-  Markdown renderer and immutable local delivery outbox;
+- a closed private daily-report v1.1 JSON contract with v1.0 replay support,
+  version-aware deterministic Chinese Markdown and an immutable local delivery
+  outbox;
 - the complete `evaluate-us-funds` Skill and quantitative self-test.
+- deterministic Social Heat, prediction calibration and fund-monitor engines,
+  plus an owner-only sanitized aggregate snapshot publisher and monotonic
+  transport into the private daily report; none has trade authority.
 
 ## Verification performed
 
@@ -63,5 +68,6 @@
 The larger Pro modules listed in the implementation roadmap are not part of
 this verified baseline. Trump/Polymarket event studies, expanded
 volatility surfaces, overnight models, Barra-style factor risk, Kalman beta,
-manager-skill attribution and the prediction ledger remain roadmap items. See
+manager-skill attribution, production social collectors and automatic
+prediction-horizon scheduling remain roadmap items. See
 `docs/IMPLEMENTATION_STATUS.md` for the complete boundary.

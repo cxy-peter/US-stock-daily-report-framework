@@ -117,8 +117,9 @@ send a GPT message.
 The implemented private runtime now:
 
 1. resolve all completed exchange sessions oldest first;
-2. validate any already-aggregated fund/Social Heat research snapshot before
-   ledger mutation, while preserving the prior accounting-only fallback;
+2. load and validate an optional owner-only, self-hashed aggregate research
+   snapshot before ledger mutation, while preserving the accounting-only
+   fallback;
 3. obtain accepted closes and stop at the first failed gate;
 4. settle the modeled ledger and value both books;
 5. build and finalize this JSON document;
@@ -126,11 +127,29 @@ The implemented private runtime now:
 7. refuses to advance past an unresolved earlier delivery.
 
 The aggregate research adapter does not load raw posts, URLs, author/content
-identifiers, credentials or paths. Report v1.0 carries fund status and one
-platform aggregate per social source without inventing a platform/topic cross;
-prediction-ledger and topic-level projections remain deferred to a future
-schema version. Research input cannot change configured or modeled DCA,
-portfolio-ledger events, accounting actions or the manual-trade prompt.
+identifiers, credentials or paths. Versioned v1.1 fields carry separate fund
+product-quality/portfolio-fit states, cadence/coverage/event keys, platform
+attention/candidate/effective weights and structured prediction weight states.
+Uncalibrated or quarantined social candidate scores are zero; decayed states
+receive a 0.25 multiplier and active states at most 1.0 before the total 5% cap.
+Research input cannot change configured or modeled DCA, portfolio-ledger
+events, accounting actions or the manual-trade prompt.
+
+`research-snapshot.latest.json` is only a sanitized transport from deterministic
+research modules into the daily entrypoint. Publishing is explicit: write the
+closed `private_research_snapshot_request/v1.0.0` envelope to the fixed
+owner-only `research-snapshot.request.json` path, then run
+`python scripts/publish_private_research.py`. The command accepts no arguments,
+revalidates all v1.1 research semantics, computes the snapshot identity and
+uses a cross-process monotonic replace; a delayed older snapshot cannot replace
+a newer one. Free text is not accepted: report prose is adapter-templated, and
+fund, calibration and source-health codes must belong to vocabularies exported
+by their producing modules. Runtime views older than two days disable calibrated
+social score and downgrade non-reject fund conclusions to `NEED_INFO`; an old
+social aggregate is disabled independently even inside a newer container. None
+of these runtime downgrades changes the persisted snapshot identity. This
+transport is not a raw social-history
+database, a fund evidence collector, or a durable acknowledgement store.
 
 Offline replay verifies same-day idempotency, partial-valuation recovery,
 last-delivered checkpoint recovery, weekend no-new-close behavior and gate

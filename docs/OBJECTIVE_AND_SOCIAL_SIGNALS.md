@@ -149,9 +149,13 @@ not cross the model boundary.
   the candidate cap is 1%-2% of the model decision score.
 - These are model-score weights, never direct portfolio weights.
 
-The current implementation stops at deterministic model output. Authorized
-X/Reddit/Xiaohongshu ingestion, private history storage and the adapter into the
-ledger-backed daily report remain separate deployment work.
+The deterministic model output and a sanitized owner-only daily-report
+transport are implemented. Prediction weight states now gate the report's
+candidate social score with conservative multipliers (`active=1`,
+`decayed=0.25`, `research_only/quarantined=0`) before the hard 5% cap; this
+still cannot change DCA, accounting or actions. Authorized
+X/Reddit/Xiaohongshu ingestion, point-in-time observation history and automatic
+horizon settlement remain separate deployment work.
 
 ## China/ADR confirmation
 

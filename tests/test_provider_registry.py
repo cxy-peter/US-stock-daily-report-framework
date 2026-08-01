@@ -205,10 +205,12 @@ def test_twelve_data_requests_exact_raw_regular_session_close_and_parses_lineage
     assert kwargs["params"]["symbol"] == "DEMO_EQ"
     assert kwargs["params"]["interval"] == "1day"
     assert kwargs["params"]["date"] == SESSION.isoformat()
+    assert "start_date" not in kwargs["params"]
+    assert "end_date" not in kwargs["params"]
     assert kwargs["params"]["adjust"] == "none"
     assert kwargs["params"]["prepost"] == "false"
     assert kwargs["params"]["timezone"] == "Exchange"
-    assert kwargs["params"]["outputsize"] in {1, "1"}
+    assert "outputsize" not in kwargs["params"]
     assert kwargs["params"]["order"] == "ASC"
     assert kwargs["params"]["apikey"] == "test-key"
     assert kwargs["timeout"] > 0
@@ -403,6 +405,18 @@ def test_one_eligible_source_is_provisional_valuation_only():
     assert result.price_gate_permitted is False
     assert result.independent_source_count == 1
     assert result.selected_price == Decimal("100.00")
+
+
+def test_structurally_rejected_observation_is_not_reported_as_success():
+    result = _registry(
+        _observation("twelve_data", "100.00", exchange_mic="XNYS"),
+    ).resolve(_instrument(), SESSION)
+
+    assert result.status == "blocked"
+    assert result.observations
+    assert result.attempts[0].status == "rejected"
+    assert result.attempts[0].observation_id == result.observations[0].observation_id
+    assert "twelve_data:exchange_mic_mismatch" in result.reasons
 
 
 def test_two_feeds_in_same_independence_group_count_as_one_source():

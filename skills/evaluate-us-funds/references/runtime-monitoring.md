@@ -86,7 +86,9 @@ re-open the applicable product branches and produce a full or first-pass memo.
 `NOT_DUE` is a runtime cadence state, not a fifth investment-committee verdict.
 The full memo continues to use `PASS`, `WATCH`, `REJECT`, or `NEED_INFO`.
 
-Production collection, private state persistence, daily-report rendering, and
-GPT delivery adapters remain separate deployment work. They must reuse the
-owner-only non-Git path and ACL gates and may not weaken this module's no-trade
-boundary.
+Production collection, durable cadence/event-acknowledgement state and GPT
+delivery adapters remain separate deployment work. The framework can persist a
+self-hashed, owner-only **sanitized aggregate projection** for the daily report;
+that transport is not evidence collection and does not acknowledge an event.
+All deployment adapters must reuse the owner-only non-Git path and ACL gates
+and may not weaken this module's no-trade boundary.

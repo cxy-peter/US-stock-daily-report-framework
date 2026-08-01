@@ -23,6 +23,9 @@ from serenity_monitor.daily_outbox import (
 )
 from serenity_monitor.private_daily_markdown import render_private_daily_markdown
 from serenity_monitor.private_daily_report import (
+    LEGACY_SCHEMA_VERSION,
+    compute_delivery_id,
+    compute_report_id,
     compute_target_key_sha256,
     finalize_private_daily_report,
 )
@@ -180,6 +183,21 @@ def _report(
         _unfinished_report(prepared_at=prepared_at),
         target_key_sha256=compute_target_key_sha256(target),
     )
+
+
+def _legacy_report() -> dict:
+    report = _report()
+    target_hash = compute_target_key_sha256(TARGET)
+    report["schema_version"] = LEGACY_SCHEMA_VERSION
+    report["delivery"]["delivery_id"] = compute_delivery_id(
+        delivery_date=report["delivery"]["delivery_date"],
+        timezone=report["delivery"]["timezone"],
+        channel=report["delivery"]["channel"],
+        target_key_sha256=target_hash,
+        schema_version=LEGACY_SCHEMA_VERSION,
+    )
+    report["report_id"] = compute_report_id(report)
+    return report
 
 
 def _dated_report(
@@ -490,6 +508,22 @@ def test_load_validated_content_is_identity_only_and_repr_redacted(
     assert content.delivery_id == result.delivery_id
     assert TARGET not in repr(content)
     assert "Synthetic." not in repr(content)
+
+
+def test_legacy_v1_outbox_content_replays_with_byte_stable_renderer(
+    tmp_path: Path,
+) -> None:
+    outbox = _outbox(tmp_path)
+    report = _legacy_report()
+    result = outbox.enqueue(report, TARGET, LEDGER_HASH, now=NOW)
+
+    content = outbox.load_validated_content(result.delivery_id)
+    claim = outbox.claim(result.delivery_id, IDEMPOTENT, now=NOW)
+
+    assert content.report["schema_version"] == LEGACY_SCHEMA_VERSION
+    assert "| 基金 | 状态 | 摘要 | 理由代码 |" in content.markdown
+    assert "| 产品质量 |" not in content.markdown
+    assert claim.markdown == content.markdown
 
 
 def test_sensitive_dataclass_repr_omits_scopes_content_and_lease(

@@ -41,6 +41,12 @@ from .private_daily_runtime import (
     initialize_private_ledger,
 )
 from .private_report_store import PrivateReportStoreError
+from .private_research_store import (
+    PrivateResearchStoreCommitUnknown,
+    PrivateResearchStoreError,
+    load_private_research_snapshot,
+    publish_private_research_snapshot_request,
+)
 from .private_runtime_config import (
     PrivateRuntimeConfigError,
     load_private_daily_runtime_config,
@@ -110,6 +116,15 @@ _MANUAL_EVENT_ERROR_LINES = {
     EXIT_INTERRUPTED: "PRIVATE_MANUAL_EVENT:INTERRUPTED",
 }
 
+_RESEARCH_SNAPSHOT_ERROR_LINES = {
+    EXIT_BUSY: "PRIVATE_RESEARCH_SNAPSHOT:BUSY",
+    EXIT_CONFIG_OR_PRIVACY: "PRIVATE_RESEARCH_SNAPSHOT:CONFIG_OR_PRIVACY_REJECTED",
+    EXIT_INTEGRITY: "PRIVATE_RESEARCH_SNAPSHOT:INTEGRITY_REJECTED",
+    EXIT_PERSISTENCE: "PRIVATE_RESEARCH_SNAPSHOT:PERSISTENCE_FAILED",
+    EXIT_INTERNAL: "PRIVATE_RESEARCH_SNAPSHOT:INTERNAL_FAILURE",
+    EXIT_INTERRUPTED: "PRIVATE_RESEARCH_SNAPSHOT:INTERRUPTED",
+}
+
 
 def _clock() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -170,12 +185,15 @@ def _map_exception(exc: BaseException) -> int:
         return EXIT_NOT_INITIALIZED
     if isinstance(exc, OutboxLedgerMutationBlocked):
         return EXIT_DELIVERY_PENDING
+    if isinstance(exc, PrivateResearchStoreCommitUnknown):
+        return EXIT_PERSISTENCE
     if isinstance(
         exc,
         (
             PrivateDailyIntegrityError,
             PortfolioLedgerError,
             PrivateDailyReportError,
+            PrivateResearchStoreError,
         ),
     ):
         return EXIT_INTEGRITY
@@ -254,11 +272,20 @@ def run_private_daily_main(
                     runtime_paths=paths,
                     config_bytes_sha256=config_bytes_sha256,
                 )
+                research_snapshot = load_private_research_snapshot(
+                    paths,
+                    prepared_at=_clock(),
+                )
                 missing = missing_provider_environment(environment)
                 result = runtime.prepare(
                     target_key,
                     preflight_block_reason=(
                         None if not missing else "provider_credentials_missing"
+                    ),
+                    research_projection=(
+                        None
+                        if research_snapshot is None
+                        else research_snapshot.projection
                     ),
                 )
                 _tighten_runtime_files(paths)
@@ -473,6 +500,35 @@ def attest_private_event_main(
         return code if code in _MANUAL_EVENT_ERROR_LINES else EXIT_INTERNAL
 
 
+def publish_private_research_main(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> int:
+    """Publish one fixed, owner-only sanitized research projection request."""
+
+    environment = os.environ if environ is None else environ
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            config = _load_live_config(environment)
+            paths = resolve_private_runtime_paths(config, environment)
+            ensure_private_storage(paths)
+            publish_private_research_snapshot_request(
+                paths,
+                prepared_at=_clock(),
+            )
+        sys.stderr.write("PRIVATE_RESEARCH_SNAPSHOT:PUBLISHED\n")
+        return EXIT_OK
+    except BaseException as exc:
+        code = _map_exception(exc)
+        line = _RESEARCH_SNAPSHOT_ERROR_LINES.get(
+            code,
+            _RESEARCH_SNAPSHOT_ERROR_LINES[EXIT_INTERNAL],
+        )
+        sys.stderr.write(line + "\n")
+        return code if code in _RESEARCH_SNAPSHOT_ERROR_LINES else EXIT_INTERNAL
+
+
 __all__ = [
     "EXIT_BUSY",
     "EXIT_CONFIG_OR_PRIVACY",
@@ -487,5 +543,6 @@ __all__ = [
     "attest_private_opening_main",
     "attest_private_event_main",
     "initialize_private_daily_main",
+    "publish_private_research_main",
     "run_private_daily_main",
 ]

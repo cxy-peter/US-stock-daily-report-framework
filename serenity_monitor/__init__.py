@@ -54,8 +54,10 @@ from .trading_calendar import (
 )
 from .private_daily_report import (
     JSON_SCHEMA_URI,
+    LEGACY_SCHEMA_VERSION,
     SCHEMA_PATH,
     SCHEMA_VERSION,
+    SUPPORTED_SCHEMA_VERSIONS,
     PrivateDailyReportCanonicalizationError,
     PrivateDailyReportError,
     PrivateDailyReportIdentityError,
@@ -66,6 +68,7 @@ from .private_daily_report import (
     compute_report_id,
     compute_target_key_sha256,
     finalize_private_daily_report,
+    validate_private_daily_research_section,
     validate_private_daily_report,
 )
 from .private_daily_markdown import render_private_daily_markdown
@@ -167,12 +170,14 @@ __all__ = [
     "OpeningPosition", "PortfolioLedger", "PortfolioLedgerError", "PositionState",
     "ValuationCloseLineage",
     "CalendarProvenance", "ExchangeSessionError", "ExchangeSessionResolver",
-    "JSON_SCHEMA_URI", "SCHEMA_PATH", "SCHEMA_VERSION",
+    "JSON_SCHEMA_URI", "LEGACY_SCHEMA_VERSION", "SCHEMA_PATH", "SCHEMA_VERSION",
+    "SUPPORTED_SCHEMA_VERSIONS",
     "PrivateDailyReportCanonicalizationError", "PrivateDailyReportError",
     "PrivateDailyReportIdentityError", "PrivateDailyReportSchemaError",
     "PrivateDailyReportSemanticError", "canonical_json", "compute_delivery_id",
     "compute_report_id", "compute_target_key_sha256",
-    "finalize_private_daily_report", "validate_private_daily_report",
+    "finalize_private_daily_report", "validate_private_daily_research_section",
+    "validate_private_daily_report",
     "render_private_daily_markdown", "DailyOutboxError", "DailyReportOutbox",
     "DeliveredCheckpoint", "DeliveryAdapterCapabilities", "DeliveryAttempt", "DeliveryClaim",
     "EnqueueResult", "OutboxCapabilityError", "OutboxIdempotencyConflict",

@@ -81,7 +81,9 @@ Research/display quotes and settlement-grade closes are separate data paths.
 Twelve Data and Alpha Vantage, validate exact session/security/currency/price
 semantics, and require two independent sources before it emits an
 `AcceptedClose`. It selects the validated primary value and never averages a
-conflict.
+conflict. Twelve Data backfills use the documented exact `date` parameter
+without `outputsize` truncation, and a fetched but structurally rejected
+observation is reported as blocked rather than healthy.
 
 Agreement at or below 30 bps passes the price gate. A 30--75 bps warning is
 blocked from settlement by default, and a difference above 75 bps is blocked.
@@ -157,10 +159,13 @@ All social output remains research-only and cannot independently trigger
 topic taxonomy IDs from a closed built-in list and irreversible identifiers,
 not raw posts, handles or URLs. Runtime policy may narrow the list but cannot
 add private labels. Public output never persists record-level social hashes,
-timestamps or engagement data. The owner-only runtime can now project one
-sanitized aggregate row per available platform into the private report; it
-does not collect production data, persist topic-level records or turn the
-result into an action.
+timestamps or engagement data. The owner-only runtime can now persist and load
+one sanitized aggregate research snapshot. Prediction-ledger weight states
+conservatively gate each platform's candidate execution score (`active=1`,
+`decayed=0.25`, `research_only/quarantined=0`) before the aggregate 5% cap;
+Xiaohongshu remains zero in every state. This changes research ranking only.
+The framework still does not collect production social data, persist raw topic
+records or turn the result into an action.
 
 ## Prediction research ledger
 
@@ -187,9 +192,16 @@ uses fund-scoped material-event acknowledgements and returns `NOT_DUE` when no
 complete review is due. Social evidence can open a question but cannot close a
 required category. Every trade, order, position and DCA capability remains
 hard-coded off. A pure aggregate adapter now carries the fund status, controlled
-reason codes and the separate product-quality/portfolio-fit states into the
-private report summary. Production evidence collection remains owner-supplied
-and is not enabled by the public framework.
+reason codes, separate product-quality/portfolio-fit states, cadence, coverage,
+next due time and exact triggered-event keys into the private report. The
+sanitized snapshot transport makes those rows available to the normal daily
+entrypoint. A fixed owner-only request can be published with
+`python scripts/publish_private_research.py`; semantic validation and monotonic
+replacement complete before the daily ledger is touched. The request accepts
+only adapter templates and producer-exported closed code vocabularies; it is not
+a generic free-text channel. Production evidence
+collection and durable event acknowledgement state remain owner-supplied and
+are not enabled by the public framework.
 
 ## Run the synthetic public smoke test
 
@@ -274,6 +286,7 @@ python scripts/initialize_private_daily.py
 Then prepare one private report/outbox item after the official close:
 
 ```bash
+python scripts/publish_private_research.py  # only when a new sanitized request exists
 python scripts/run_private_daily.py
 ```
 
@@ -307,12 +320,13 @@ runtime paths, exact configuration-byte digest and an aware clock. Operators
 should use the guarded script rather than call that internal function.
 
 `serenity_monitor/private_research_adapter.py` is the no-I/O bridge for
-already-computed `FundMonitorResult` and `SocialHeatResult` aggregates. The
-runtime validates this input before any ledger mutation. It exposes only
-controlled aggregate rows and optional source-health status; it cannot modify
-the ledger, configured DCA, report actions or manual-trade prompt. The current
-v1.0 report intentionally omits prediction-ledger and social-topic detail until
-a new versioned report contract is introduced.
+already-computed `FundMonitorResult`, `SocialHeatResult` and
+`PredictionWeightState` aggregates. The runtime validates this input before
+any ledger mutation. `serenity_monitor/private_research_store.py` atomically
+persists only the sanitized, self-hashed projection under the owner-only
+runtime root; the normal daily entrypoint loads it when present. It cannot
+modify the ledger, configured DCA, report actions or manual-trade prompt. Raw
+posts, URLs, identifiers and prediction-event paths remain outside report v1.
 
 ## Public CI
 
@@ -328,15 +342,17 @@ synthetic offline smoke report in the runner's temporary directory. It has:
 
 The private prepare runtime is implemented separately from legacy
 `run_report.py`. Owner-confirmed manual-event ingestion is implemented, but a
-verified GPT receiver adapter and recurring delivery job are still not enabled;
-the existing task must remain paused until receiver lookup or stable
-idempotency semantics and one persisted live end-to-end trial are proven.
+verified GPT receiver adapter is not shipped in this public repository. Any
+owner-managed external GPT schedule remains separate from this code and must
+not claim code-backed delivery until receiver lookup or stable idempotency
+semantics and one persisted live end-to-end trial are proven.
 
 ## Main files
 
 ```text
 config/portfolio.example.yaml           fictional public configuration
 scripts/check_public_privacy.py          tracked-tree privacy gate
+scripts/publish_private_research.py      fixed sanitized snapshot publisher
 serenity_monitor/data.py                 market-data providers
 serenity_monitor/provider_registry.py    accepted-close price validation
 serenity_monitor/trading_calendar.py     exchange-session completion
@@ -346,6 +362,8 @@ serenity_monitor/private_daily_report.py report validation and identities
 serenity_monitor/private_daily_markdown.py deterministic private Markdown
 serenity_monitor/daily_outbox.py          private delivery state machine
 serenity_monitor/private_daily_runtime.py private close/DCA/report orchestration
+serenity_monitor/private_research_adapter.py aggregate research/calibration projection
+serenity_monitor/private_research_store.py owner-only sanitized snapshot transport
 serenity_monitor/private_runtime_config.py strict private runtime configuration
 serenity_monitor/private_runtime_paths.py external storage and privacy gates
 serenity_monitor/private_windows_security.py Windows owner-only ACL boundary

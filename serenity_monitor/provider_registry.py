@@ -509,8 +509,11 @@ class TwelveDataCloseProvider(_JsonCloseProvider):
             {
                 "symbol": provider_symbol,
                 "interval": "1day",
+                # Twelve Data exposes an exact ``date`` parameter.  A
+                # date-only ``end_date`` is a midnight upper bound and can
+                # exclude that session's daily bar, so same-day start/end
+                # ranges are deliberately avoided for backfills.
                 "date": expected_session.isoformat(),
-                "outputsize": 1,
                 "order": "ASC",
                 "timezone": "Exchange",
                 "adjust": "none",
@@ -915,6 +918,20 @@ class ProviderRegistry:
             else:
                 structurally_valid.append(observation)
 
+        # Fetch success is not acceptance success.  Preserve the collected
+        # observation for audit, but never let a structurally rejected close
+        # appear as a healthy provider row in the private daily report.
+        normalized_attempts = tuple(
+            replace(
+                attempt,
+                status="rejected",
+                detail=f"{attempt.provider_id}: observation rejected by acceptance policy",
+            )
+            if attempt.observation_id in rejection_map
+            else attempt
+            for attempt in attempts
+        )
+
         # A provider family counts once even if several endpoints or mirrors are configured.
         independent: list[CloseObservation] = []
         seen_groups: set[str] = set()
@@ -992,7 +1009,7 @@ class ProviderRegistry:
             agreement_bps=agreement,
             independent_source_count=len(settlement_sources),
             observations=tuple(observations),
-            attempts=tuple(attempts),
+            attempts=normalized_attempts,
             reasons=tuple(reasons),
             valuation_permitted=valuation,
             price_gate_permitted=price_gate,

@@ -28,6 +28,8 @@ repository commit or branch is part of this provenance.
 - a separate accepted-close provider registry for raw Twelve Data and Alpha
   Vantage daily observations, with exact-session identity gates, independent
   source consensus, deterministic audit IDs and atomic batch price gating;
+  Twelve Data uses the documented exact start/end date range and structurally
+  rejected observations cannot appear as healthy source rows;
 - pinned U.S. exchange-session resolution with DST, holiday and early-close
   handling while preserving each instrument's MIC identity;
 - an offline append-only SQLite ledger with confirmed and modeled books,
@@ -66,10 +68,16 @@ repository commit or branch is part of this provenance.
   accepted-close settlement, raw/factor-residual outcomes, MFE/MAE, Brier,
   grouped Rank IC, explicit reversals and automatic research-only/decay/
   quarantine states;
-- a pure private-report research adapter that accepts only aggregate fund and
-  Social Heat model outputs, validates all no-trade flags before ledger work,
-  emits deterministic sanitized report/source-health rows and leaves DCA,
-  accounting actions and the manual-trade prompt unchanged;
+- a pure private-report research adapter that accepts only aggregate fund,
+  Social Heat and prediction-weight-state outputs, validates all no-trade flags
+  before ledger work, conservatively applies calibration to social candidate
+  scores and preserves structured fund quality/fit, cadence, coverage and event
+  keys;
+- an atomic, self-hashed, owner-only sanitized research snapshot transport with
+  a no-argument publisher, shared pre-ledger v1.1 semantic validation,
+  monotonic replacement and stale runtime downgrades; the normal private daily
+  entrypoint loads it when present while leaving DCA, accounting actions and
+  the manual-trade prompt unchanged;
 - this status record, so later work can distinguish code from proposals.
 
 ## Still roadmap, not current implementation
@@ -78,13 +86,16 @@ repository commit or branch is part of this provenance.
   already enforces an explicit per-symbol reconciliation gate);
 - integration of the legacy research council and objective-risk layer into the
   new ledger-backed daily runtime; the fund/Social Heat aggregate projection is
-  implemented, while owner-only snapshot persistence and evidence adapters are
-  still missing;
+  implemented and owner-only snapshot transport is connected, while production
+  evidence collection adapters are still missing;
 - authorized production social-data adapters and persistent private Social Heat
-  snapshots (the implemented model itself performs no collection);
+  observation history (the latest aggregate transport is implemented, but the
+  model itself performs no collection);
 - automatic scheduling and settlement of prediction-ledger horizons from the
-  private daily runtime, plus a new versioned report contract for structured
-  prediction and social-topic detail;
+  private daily runtime, plus durable raw topic evidence; the daily report now
+  carries structured aggregate prediction weight states only;
+- durable fund-monitor cadence state and exact event acknowledgements after the
+  corresponding report/research record is committed;
 - a verified GPT receiver adapter and recurring private delivery deployment;
 - persisted live end-to-end activation evidence for the private daily readiness
   contract;
@@ -103,5 +114,6 @@ document description alone.
 
 The accepted-close registry, calendar, private ledger and daily-report/outbox
 are connected by a separate private prepare runtime rather than legacy
-`run_report.py`. Recurring GPT delivery is not yet enabled. None of these
+`run_report.py`. A local verified GPT receiver adapter is not yet enabled by
+this repository. None of these
 modules connects to a broker or submits an order.
