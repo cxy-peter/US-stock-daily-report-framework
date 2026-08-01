@@ -8,6 +8,19 @@ from .data import (
     YFinanceProvider,
     snapshot_fallback_quote,
 )
+from .provider_registry import (
+    AcceptedClose,
+    AcceptedCloseBatch,
+    AlphaVantageCloseProvider,
+    CloseAcceptancePolicy,
+    CloseObservation,
+    CloseProviderError,
+    InstrumentRef,
+    ProviderAttempt,
+    ProviderRegistry,
+    RetryPolicy,
+    TwelveDataCloseProvider,
+)
 from .credibility import MarketContext
 from .china_retail_attention import (
     ChinaRetailAttentionResult,
@@ -47,6 +60,10 @@ from .state import PlanChange, compare_state, load_state, save_state
 __all__ = [
     "BaostockProvider", "CboeIndexProvider", "HybridProvider", "MockProvider", "NasdaqProvider", "Quote", "YFinanceProvider",
     "snapshot_fallback_quote",
+    "AcceptedClose", "AcceptedCloseBatch", "AlphaVantageCloseProvider",
+    "CloseAcceptancePolicy", "CloseObservation", "CloseProviderError",
+    "InstrumentRef", "ProviderAttempt", "ProviderRegistry", "RetryPolicy",
+    "TwelveDataCloseProvider",
     "MarketContext",
     "ChinaRetailAttentionResult", "ChinaRetailAttentionSettings", "TopicAttention",
     "TopicMapping", "TopicRule", "UsageAuthorization", "analyze_authorized_csv",
