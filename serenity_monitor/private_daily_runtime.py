@@ -33,6 +33,11 @@ from .private_daily_report import (
     finalize_private_daily_report,
 )
 from .private_report_store import PrivateReportFiles, persist_private_daily_report
+from .private_research_adapter import (
+    PrivateResearchAdapterError,
+    PrivateResearchInput,
+    build_private_research_projection,
+)
 from .private_runtime_config import PrivateDailyRuntimeConfig
 from .private_runtime_paths import PrivateRuntimePaths
 from .provider_registry import AcceptedCloseBatch, ProviderAttempt, ProviderRegistry
@@ -687,6 +692,7 @@ class PrivateDailyRuntime:
         target_key: str,
         *,
         preflight_block_reason: str | None = None,
+        research_input: PrivateResearchInput | None = None,
     ) -> PrivateDailyRunResult:
         if (
             preflight_block_reason is not None
@@ -733,6 +739,20 @@ class PrivateDailyRuntime:
                 processed_sessions=(),
                 blocked_session=None,
             )
+
+        if research_input is None:
+            research_document: Mapping[str, Any] | None = None
+            research_source_health: tuple[Mapping[str, Any], ...] = ()
+        else:
+            try:
+                research_projection = build_private_research_projection(
+                    research_input,
+                    prepared_at=started_at,
+                )
+            except PrivateResearchAdapterError as exc:
+                raise PrivateDailyRuntimeError("research_snapshot_invalid") from exc
+            research_document = research_projection.research
+            research_source_health = research_projection.source_health
 
         try:
             _verify_opening_matches_config(self.config, self.ledger)
@@ -789,6 +809,7 @@ class PrivateDailyRuntime:
             }
             for item in provenance
         ]
+        source_health.extend(dict(item) for item in research_source_health)
 
         audits = {session: self.ledger.session_audit(session) for session in sessions}
         unresolved = [session for session in sessions if audits[session].valuation_state != "complete"]
@@ -1095,16 +1116,21 @@ class PrivateDailyRuntime:
                 "modeled": modeled_book,
             },
             "dca": _dca_report(self.config, outcomes),
-            "research": {
-                "overall_view": (
-                    "会计运行层仅按已确认正式收盘价更新两本账；未连接券商，也未执行交易。"
-                ),
-                "market_regime": "unknown",
-                "risk_budget_multiplier": _ZERO,
-                "fund_monitoring": [],
-                "social_attention": [],
-                "notes": ["accounting_only_research_adapter_not_yet_connected"],
-            },
+            "research": (
+                dict(research_document)
+                if research_document is not None
+                else {
+                    "overall_view": (
+                        "会计运行层仅按已确认正式收盘价更新两本账；"
+                        "未连接券商，也未执行交易。"
+                    ),
+                    "market_regime": "unknown",
+                    "risk_budget_multiplier": _ZERO,
+                    "fund_monitoring": [],
+                    "social_attention": [],
+                    "notes": ["accounting_only_research_adapter_not_yet_connected"],
+                }
+            ),
             "source_health": sorted(source_health, key=lambda item: item["source_id"]),
             "actions": _base_actions(report_status, block_reasons),
             "manual_trade_prompt": {
