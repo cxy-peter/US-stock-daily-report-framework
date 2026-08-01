@@ -1,0 +1,4 @@
+interface:
+  display_name: "美股基金甲方尽调"
+  short_description: "按甲方框架研究美股基金、收益来源、风险与组合适配性"
+  default_prompt: "Use $evaluate-us-funds to evaluate a U.S. fund and test its fit with my portfolio strategy."

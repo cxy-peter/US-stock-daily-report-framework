@@ -1,0 +1,5 @@
+version: 1
+
+# Keep public examples empty. Copy this file to
+# config/manual_external_views.private.yaml for user-authorized research notes.
+items: []

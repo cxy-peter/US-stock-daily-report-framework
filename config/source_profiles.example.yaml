@@ -1,0 +1,36 @@
+profiles:
+  official_company_filing:
+    label: Company filing / earnings release
+    source_type: primary_document
+    independence_group: company_primary
+    identity_verified: true
+    regulated_entity: true
+    audited_performance: true
+    position_disclosure: always
+    conflict_disclosure: always
+    leverage_disclosure: always
+
+  financial_news:
+    label: Financial news / publisher
+    source_type: regulated_institution
+    independence_group: financial_news
+    identity_verified: true
+    regulated_entity: false
+    audited_performance: false
+    position_disclosure: unknown
+    conflict_disclosure: sometimes
+    leverage_disclosure: unknown
+
+  independent_research_template:
+    label: Replace with an authorized research source
+    source_type: independent_kol
+    independence_group: replace_with_source_id
+    identity_verified: false
+    regulated_entity: false
+    audited_performance: false
+    position_disclosure: unknown
+    conflict_disclosure: unknown
+    leverage_disclosure: unknown
+    paid_promotion_risk: 0.20
+    legal_or_compliance_flags: 0
+    track_record: {observations: 0, hits: 0}

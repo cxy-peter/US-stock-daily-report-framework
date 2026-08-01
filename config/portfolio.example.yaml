@@ -1,0 +1,162 @@
+version: 2.3
+runtime:
+  data_classification: synthetic_example
+  allow_live_report: false
+  example_only: true
+report_timezone: Asia/Shanghai
+
+# All values and positions in this file are fictional. Copy this file to
+# config/portfolio.private.yaml before adding real account data.
+portfolio:
+  positions_as_of: "2026-01-02"
+  account_value_usd: 100000
+  cash_usd: 20000
+  buying_power_usd: 20000
+  cash_reserve_pct: 0.10
+  daily_turnover_limit_pct: 0.03
+  rebalance_band_pct: 0.01
+  min_trade_usd: 100
+  default_max_weights: {high: 0.50, medium: 0.30, low: 0.10}
+  add_step_weights: {high: 0.02, medium: 0.01, low: 0.005}
+  open_step_weight: 0.005
+  cash_equivalent_tickers: [DEMO_CASH]
+  risk_group_caps:
+    broad_equity: 0.60
+    fixed_income: 0.40
+
+market_data:
+  provider: hybrid
+  benchmark: SPY
+
+objective_signals:
+  enabled: true
+  provider: hybrid
+  providers: {vix: cboe, vix3m: cboe}
+  period: 1y
+  min_healthy_groups: 2
+  min_confirming_groups: 2
+  max_staleness_days: 7
+  confirmation_threshold: 0.50
+  max_risk_budget_reduction: 0.30
+  allow_downside_risk_tightening: true
+  group_weights: {volatility: 0.45, credit: 0.30, breadth: 0.25}
+  symbols:
+    vix: ^VIX
+    vix3m: ^VIX3M
+    spy: SPY
+    rsp: RSP
+    iwm: IWM
+    hyg: HYG
+    lqd: LQD
+    hxc: ^HXC
+    kweb: KWEB
+    cnh: CNH=X
+
+china_retail_attention:
+  enabled: false
+  authorized_csv_path: config/xiaohongshu_authorized.csv
+  authorization:
+    has_right_to_use: false
+    basis: ""
+    declared_by: ""
+    purpose: investment_research
+  settings:
+    freshness_half_life_hours: 72
+    max_age_days: 30
+    engagement_winsor_quantile: 0.95
+    engagement_hard_cap: 1000000
+    duplicate_burst_window_hours: 6
+    max_records: 5000
+    validation_passed: false
+    execution_weight: 0.0
+    candidate_weight_cap: 0.02
+    manipulation_weight_block: 0.60
+
+research:
+  drawdown_add_threshold: -0.25
+  fomo_runup_1m: 0.35
+  anomaly_1d_drop: -0.12
+  volume_spike_mult: 2.5
+  trim_gain_threshold: 1.20
+  institutional_graduation_mcap: 8.0e9
+  add_requires_evidence: true
+  allow_add_in_risk_off: false
+
+evidence:
+  min_coverage_for_add: 0.60
+  min_independent_groups_for_add: 2
+  require_primary_source_for_add: true
+  manipulation_block_score: 60
+  review_score: 70
+  caution_score: 60
+  supportive_score: 40
+
+external_views:
+  enabled: false
+  source_profiles_path: config/source_profiles.example.yaml
+  manual_kol:
+    enabled: false
+    path: config/manual_external_views.example.yaml
+  x: {enabled: false, discovery_enabled: false, handles: []}
+  reddit: {enabled: false}
+  sec: {enabled: false}
+  public_web: {enabled: false, queries: []}
+
+recurring_investments:
+  enabled: true
+  weekdays_only: true
+  execution_mode: external_broker_plan
+  review_frequency: daily_and_weekly
+  base_amount_usd_per_ticker: 10
+  weekly_base_amount_usd_per_ticker: 50
+  tickers: [DEMO_EQ, DEMO_BOND]
+  max_increase_multiple: 2.0
+  minimum_amount_usd: 0
+  require_primary_source_for_increase: true
+  require_two_independent_groups_for_increase: true
+  note: Fictional example schedule; no broker connection or order execution.
+
+portfolio_note: >
+  Synthetic public example only. It does not describe the repository owner's
+  account, holdings, cash, cost basis, tax lots or investment instructions.
+
+holdings:
+  - ticker: DEMO_EQ
+    name: Synthetic Broad US Equity Example
+    asset_type: etf
+    shares: 100
+    conviction: high
+    framework: core_etf
+    max_weight_pct: 50
+    role: Fictional broad-equity core
+    risk_groups: [broad_equity]
+    thesis_checks: {cashflow_or_index_role_intact: true}
+
+  - ticker: DEMO_BOND
+    name: Synthetic Bond ETF Example
+    asset_type: etf
+    shares: 200
+    conviction: medium
+    framework: core_etf
+    max_weight_pct: 30
+    role: Fictional fixed-income allocation
+    risk_groups: [fixed_income]
+    thesis_checks: {cashflow_or_index_role_intact: true}
+
+  - ticker: DEMO_CASH
+    name: Synthetic Treasury ETF Example
+    asset_type: etf
+    shares: 100
+    conviction: high
+    framework: cash_equivalent
+    max_weight_pct: 30
+    role: Fictional liquidity reserve
+    thesis_checks: {cashflow_or_index_role_intact: true}
+
+watchlist:
+  - ticker: DEMO_SMALL
+    name: Synthetic Small-Cap ETF Watchlist Example
+    asset_type: etf
+    conviction: low
+    framework: satellite_etf
+    thesis_checks: {cashflow_or_index_role_intact: true}

@@ -1,0 +1,64 @@
+version: 1
+profile_status: incomplete
+as_of_date: UNKNOWN
+
+# Copy this file into the working directory, then replace UNKNOWN values.
+# Keep personal constraints here; do not hard-code them in the universal methodology.
+
+investor:
+  tax_residency: UNKNOWN
+  citizenship_or_domicile_if_estate_tax_relevant: UNKNOWN
+  account_type: UNKNOWN
+  broker_and_market_access: UNKNOWN
+  base_currency: UNKNOWN
+  tax_treaty_or_w8ben_status: UNKNOWN
+  professional_tax_or_legal_advice_available: UNKNOWN
+  risk_preference: UNKNOWN
+  risk_capacity: UNKNOWN
+  loss_funding_or_near_term_cash_need: UNKNOWN
+  ability_to_rebalance_during_stress: UNKNOWN
+
+mandate:
+  primary_objective: UNKNOWN
+  return_target: UNKNOWN
+  benchmark: UNKNOWN
+  investment_horizon: UNKNOWN
+  liquidity_need: UNKNOWN
+  max_tolerable_drawdown: UNKNOWN
+  annualized_volatility_budget: UNKNOWN
+  minimum_cash_buffer: UNKNOWN
+  prohibited_structures: []
+  prohibited_exposures: []
+  leverage_allowed: UNKNOWN
+  derivatives_allowed: UNKNOWN
+
+portfolio:
+  current_holdings: []
+  target_asset_weights: {}
+  risk_factor_limits: {}
+  single_fund_max_weight: UNKNOWN
+  single_issuer_max_weight: UNKNOWN
+  unrealized_gains_or_losses_relevant_to_switching: UNKNOWN
+
+implementation:
+  contribution_or_withdrawal_schedule: UNKNOWN
+  preferred_order_policy: UNKNOWN
+  maximum_acceptable_bid_ask_spread: UNKNOWN
+  maximum_acceptable_premium_discount: UNKNOWN
+  rebalance_method: UNKNOWN
+  rebalance_bands: {}
+  review_cadence: UNKNOWN
+
+research_policy:
+  decision_currency: UNKNOWN
+  minimum_history_for_full_approval: UNKNOWN
+  required_stress_periods: []
+  preferred_data_sources: []
+  social_media_role: question_generation_only
+  require_facts_inferences_judgments_separated: true
+  require_source_and_as_of_for_material_numbers: true
+
+open_questions:
+  - Confirm tax residency and account type before personalized after-tax conclusions.
+  - Define the existing overall portfolio strategy, U.S. mandate, benchmark, role of funds versus individual securities, and risk budget.
+  - Supply current holdings and intended candidate role before sizing or replacement decisions.
