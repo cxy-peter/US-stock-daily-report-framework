@@ -23,11 +23,13 @@ EXAMPLE_PROFILE_IDS = {
 ALLOWED_PUBLIC_CONFIG = {
     "config/manual_external_views.example.yaml",
     "config/portfolio.example.yaml",
+    "config/private_daily_runtime.example.yaml",
     "config/source_profiles.example.yaml",
     "config/xiaohongshu_authorized.example.csv",
 }
 APPROVED_PUBLIC_CONFIG_DIGESTS = {
     "config/portfolio.example.yaml": "1feb627ae98cf05c9b1a3aed3ecf570a35b6bbd03f34a8468284cc13973eb837",
+    "config/private_daily_runtime.example.yaml": "471a9d33966e01b4bf6caf725259950e40e22a9d663b3fa6cafe7e8a63212bf3",
     "config/manual_external_views.example.yaml": "dc9724d7ba3db161b987571036d0a2ea48ecad90877af6b1535b73ff82f0ff79",
     "config/source_profiles.example.yaml": "fec5e92c8f5c192a719e37cf48373226ee1a2adc2e2bcc50e71e2c90ef21c006",
     "config/xiaohongshu_authorized.example.csv": "6ddfea4316316098f5d533a16046db9efc837cd2a85ef9eaa96cc190bb6f9ec5",
@@ -242,6 +244,7 @@ def check_public_tree() -> None:
 
     required = {
         "config/portfolio.example.yaml",
+        "config/private_daily_runtime.example.yaml",
         "config/manual_external_views.example.yaml",
         "config/source_profiles.example.yaml",
         "config/xiaohongshu_authorized.example.csv",
@@ -274,6 +277,28 @@ def check_public_tree() -> None:
         for key in ("entry_price", "broker_pnl_usd", "broker_pnl_pct")
     ):
         _fail("public portfolio example contains cost or P/L fields")
+
+    private_runtime_example = yaml.safe_load(
+        (ROOT / "config" / "private_daily_runtime.example.yaml").read_text(
+            encoding="utf-8"
+        )
+    ) or {}
+    example_runtime = private_runtime_example.get("runtime", {}) or {}
+    if example_runtime != {
+        "data_classification": "synthetic_example",
+        "allow_live_report": False,
+        "example_only": True,
+        "execution_mode": "modeled_manual_only",
+    }:
+        _fail("public private-runtime example has an unsafe runtime mode")
+    example_private = private_runtime_example.get("private_daily_runtime", {}) or {}
+    if example_private.get("providers") != ["twelve_data", "alpha_vantage"]:
+        _fail("public private-runtime example changed its provider boundary")
+    if set((example_private.get("dca_plan", {}) or {}).get("base_amounts", {})) != {
+        "DEMO_BOND",
+        "DEMO_EQ",
+    }:
+        _fail("public private-runtime example DCA symbols are not synthetic")
 
     manual = yaml.safe_load(
         (ROOT / "config" / "manual_external_views.example.yaml").read_text(

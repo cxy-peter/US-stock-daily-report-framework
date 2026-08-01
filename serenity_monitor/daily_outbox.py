@@ -19,7 +19,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
@@ -88,8 +88,8 @@ class DeliveryAdapterCapabilities:
 
     supports_idempotency_key: bool
     supports_delivery_lookup: bool
-    idempotency_scope: str | None = None
-    lookup_scope: str | None = None
+    idempotency_scope: str | None = field(default=None, repr=False)
+    lookup_scope: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.supports_idempotency_key, bool):
@@ -162,10 +162,10 @@ class DeliveryClaim:
     delivery_date: dt.date
     channel: str
     target_key_sha256: str
-    report: Mapping[str, Any]
-    markdown: str
+    report: Mapping[str, Any] = field(repr=False)
+    markdown: str = field(repr=False)
     idempotency_key: str
-    lease_token: str
+    lease_token: str = field(repr=False)
     claimed_at: dt.datetime
     lease_expires_at: dt.datetime
 
@@ -210,6 +210,25 @@ class DeliveryAttempt:
     idempotent_retry_authorized_at: dt.datetime | None
     error_code: str | None
     receiver_receipt_sha256: str | None
+
+
+@dataclass(frozen=True)
+class DeliveredCheckpoint:
+    """Minimal ledger checkpoint from the most recent delivered report."""
+
+    portfolio_as_of_session: dt.date | None
+    ledger_last_event_hash: str | None
+    delivery_date: dt.date
+
+
+@dataclass(frozen=True, repr=False)
+class OutboxContent:
+    """Validated private content loaded by delivery identity, never by target."""
+
+    report_id: str
+    delivery_id: str
+    report: Mapping[str, Any]
+    markdown: str
 
 
 class DailyReportOutbox:
@@ -443,7 +462,8 @@ class DailyReportOutbox:
 
         with self._transaction() as connection:
             row = self._delivery_row(connection, normalized_delivery_id)
-            self._verify_persisted_immutable(row)
+            validated_report = self._verify_persisted_immutable(row)
+            self._verify_persisted_state(connection, row, validated_report)
             created_at = _parse_timestamp(row["created_at"], "created_at")
             updated_at = _parse_timestamp(row["updated_at"], "updated_at")
             if claimed_at < created_at or claimed_at < updated_at:
@@ -539,7 +559,7 @@ class DailyReportOutbox:
                     delivery_date=_date(row["delivery_date"], "delivery_date"),
                     channel=str(row["channel"]),
                     target_key_sha256=str(row["target_key_sha256"]),
-                    report=json.loads(str(row["report_json"])),
+                    report=validated_report,
                     markdown=str(row["markdown"]),
                     idempotency_key=str(row["delivery_id"]),
                     lease_token=lease_token,
@@ -845,6 +865,149 @@ class DailyReportOutbox:
         with self._connect() as connection:
             return self._record_from_row(self._delivery_row(connection, normalized))
 
+    def find_slot(
+        self,
+        target_key: str,
+        channel: str,
+        delivery_date: dt.date | str,
+    ) -> OutboxRecord | None:
+        """Find one receiver/day slot without returning its private content.
+
+        The raw receiver key is hashed only in memory.  All rows are verified
+        before the lookup result is trusted so corruption cannot masquerade as
+        an unused slot and allow a runtime to mutate its ledger a second time.
+        """
+
+        target_key_sha256 = _target_key_hash(target_key)
+        normalized_channel = _nonempty_text(channel, "channel", 128)
+        normalized_date = _date(delivery_date, "delivery_date")
+        with self._connect() as connection:
+            rows = self._verified_rows(connection)
+        matches = [
+            record
+            for record, _report in rows
+            if hmac.compare_digest(record.target_key_sha256, target_key_sha256)
+            and record.channel == normalized_channel
+            and record.delivery_date == normalized_date
+        ]
+        if len(matches) > 1:
+            raise OutboxIntegrityError("daily delivery slot is not unique")
+        return None if not matches else matches[0]
+
+    def latest_delivered_checkpoint(
+        self,
+        target_key: str,
+        channel: str,
+    ) -> DeliveredCheckpoint | None:
+        """Return the newest delivered portfolio checkpoint for a receiver.
+
+        The projection deliberately excludes the raw target, its digest, the
+        report body, and Markdown.  A blocked first-run report may legitimately
+        have no portfolio session or ledger hash.
+        """
+
+        target_key_sha256 = _target_key_hash(target_key)
+        normalized_channel = _nonempty_text(channel, "channel", 128)
+        with self._connect() as connection:
+            rows = self._verified_rows(connection)
+        delivered = [
+            (record, report)
+            for record, report in rows
+            if hmac.compare_digest(record.target_key_sha256, target_key_sha256)
+            and record.channel == normalized_channel
+            and record.status == "delivered"
+        ]
+        if not delivered:
+            return None
+        record, report = max(
+            delivered,
+            key=lambda item: (
+                item[0].delivery_date,
+                item[0].delivered_at or item[0].updated_at,
+                item[0].outbox_id,
+            ),
+        )
+        portfolio = report.get("portfolio")
+        if not isinstance(portfolio, Mapping):  # pragma: no cover - schema guard
+            raise OutboxIntegrityError("persisted report portfolio is invalid")
+        raw_session = portfolio.get("as_of_session")
+        as_of_session = (
+            None
+            if raw_session is None
+            else _persisted_date(raw_session, "report.portfolio.as_of_session")
+        )
+        ledger_hash = _persisted_optional_hash(
+            portfolio.get("ledger_last_event_hash"),
+            "report.portfolio.ledger_last_event_hash",
+        )
+        if not _optional_hashes_equal(ledger_hash, record.ledger_last_event_hash):
+            raise OutboxIntegrityError("delivered checkpoint ledger identity disagrees")
+        return DeliveredCheckpoint(
+            portfolio_as_of_session=as_of_session,
+            ledger_last_event_hash=ledger_hash,
+            delivery_date=record.delivery_date,
+        )
+
+    def oldest_pending(
+        self,
+        target_key: str,
+        channel: str,
+        *,
+        before_delivery_date: dt.date | str | None = None,
+    ) -> OutboxRecord | None:
+        """Return the oldest unresolved slot, optionally strictly before a day.
+
+        Prepared, actively sending, ambiguous, and explicitly retryable rows
+        all block later ledger mutation until the runtime resolves them.
+        """
+
+        target_key_sha256 = _target_key_hash(target_key)
+        normalized_channel = _nonempty_text(channel, "channel", 128)
+        cutoff = (
+            None
+            if before_delivery_date is None
+            else _date(before_delivery_date, "before_delivery_date")
+        )
+        with self._connect() as connection:
+            rows = self._verified_rows(connection)
+        pending = [
+            record
+            for record, _report in rows
+            if hmac.compare_digest(record.target_key_sha256, target_key_sha256)
+            and record.channel == normalized_channel
+            and record.status in {"prepared", "sending", "delivery_unknown", "retryable"}
+            and (cutoff is None or record.delivery_date < cutoff)
+        ]
+        if not pending:
+            return None
+        return min(
+            pending,
+            key=lambda record: (
+                record.delivery_date,
+                record.created_at,
+                record.outbox_id,
+            ),
+        )
+
+    def load_validated_content(self, delivery_id: str) -> OutboxContent:
+        """Load canonical JSON and deterministic Markdown behind a tamper gate.
+
+        Content is addressed only by the opaque delivery identity.  Receiver
+        targets and lease secrets are neither accepted nor returned.
+        """
+
+        normalized = _hash_text(delivery_id, "delivery_id")
+        with self._connect() as connection:
+            row = self._delivery_row(connection, normalized)
+            report = self._verify_persisted_immutable(row)
+            self._verify_persisted_state(connection, row, report)
+        return OutboxContent(
+            report_id=str(row["report_id"]),
+            delivery_id=str(row["delivery_id"]),
+            report=report,
+            markdown=str(row["markdown"]),
+        )
+
     def attempts(self, delivery_id: str) -> tuple[DeliveryAttempt, ...]:
         """Return sanitized attempt history in creation order."""
 
@@ -857,6 +1020,237 @@ class DailyReportOutbox:
                 (int(row["outbox_id"]),),
             ).fetchall()
         return tuple(self._attempt_from_row(item) for item in rows)
+
+    def _verified_rows(
+        self,
+        connection: sqlite3.Connection,
+    ) -> tuple[tuple[OutboxRecord, Mapping[str, Any]], ...]:
+        """Verify the full outbox before a checkpoint or slot decision.
+
+        A target digest is itself an immutable column.  Filtering in SQL before
+        verifying it would let a corrupted digest hide an existing slot, so
+        runtime-preflight reads deliberately validate every delivery row first.
+        """
+
+        rows = connection.execute(
+            "SELECT * FROM daily_report_outbox ORDER BY outbox_id"
+        ).fetchall()
+        verified: list[tuple[OutboxRecord, Mapping[str, Any]]] = []
+        for row in rows:
+            report = self._verify_persisted_immutable(row)
+            record = self._verify_persisted_state(connection, row, report)
+            verified.append((record, report))
+        return tuple(verified)
+
+    def _verify_persisted_state(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        report: Mapping[str, Any],
+    ) -> OutboxRecord:
+        """Validate mutable state and its attempt-chain relationships."""
+
+        try:
+            record = self._record_from_row(row)
+            if record.updated_at < record.created_at:
+                raise OutboxIntegrityError("persisted outbox timestamps are not monotonic")
+            prepared_at = _parse_timestamp(
+                report.get("prepared_at"), "report.prepared_at"
+            )
+            if record.created_at < prepared_at:
+                raise OutboxIntegrityError(
+                    "persisted outbox creation precedes report preparation"
+                )
+
+            attempt_count = _persisted_nonnegative_int(
+                row["attempt_count"], "attempt_count"
+            )
+            if attempt_count != record.attempt_count:
+                raise OutboxIntegrityError("persisted attempt count is invalid")
+            attempt_rows = connection.execute(
+                "SELECT * FROM daily_delivery_attempts WHERE outbox_id = ? "
+                "ORDER BY attempt_number, attempt_id",
+                (record.outbox_id,),
+            ).fetchall()
+            if len(attempt_rows) != attempt_count:
+                raise OutboxIntegrityError(
+                    "persisted attempt count does not match attempt history"
+                )
+
+            attempts: list[DeliveryAttempt] = []
+            for expected_number, attempt_row in enumerate(attempt_rows, start=1):
+                for capability_column in (
+                    "supports_idempotency_key",
+                    "supports_delivery_lookup",
+                ):
+                    capability_value = attempt_row[capability_column]
+                    if (
+                        isinstance(capability_value, bool)
+                        or not isinstance(capability_value, int)
+                        or capability_value not in {0, 1}
+                    ):
+                        raise OutboxIntegrityError(
+                            "persisted attempt capability flag is invalid"
+                        )
+                attempt = self._attempt_from_row(attempt_row)
+                if attempt.outbox_id != record.outbox_id:
+                    raise OutboxIntegrityError("attempt references a different outbox row")
+                if attempt.attempt_number != expected_number:
+                    raise OutboxIntegrityError("attempt numbers are not contiguous")
+                if not attempt.attempt_id:
+                    raise OutboxIntegrityError("persisted attempt identity is empty")
+                _persisted_hash(
+                    attempt_row["lease_token_sha256"],
+                    "attempt.lease_token_sha256",
+                )
+                if not (
+                    attempt.supports_idempotency_key
+                    or attempt.supports_delivery_lookup
+                ):
+                    raise OutboxIntegrityError(
+                        "persisted attempt lacks an exactly-once capability"
+                    )
+                if attempt.claimed_at < record.created_at:
+                    raise OutboxIntegrityError(
+                        "persisted attempt predates outbox creation"
+                    )
+                if attempt.lease_expires_at <= attempt.claimed_at:
+                    raise OutboxIntegrityError(
+                        "persisted attempt lease does not advance time"
+                    )
+                if attempt.completed_at is not None and (
+                    attempt.completed_at < attempt.claimed_at
+                ):
+                    raise OutboxIntegrityError(
+                        "persisted attempt completion predates its claim"
+                    )
+                if attempt.reconciled_at is not None and (
+                    attempt.completed_at is None
+                    or attempt.reconciled_at < attempt.completed_at
+                ):
+                    raise OutboxIntegrityError(
+                        "persisted attempt reconciliation is not monotonic"
+                    )
+                if attempt.idempotent_retry_authorized_at is not None and (
+                    attempt.completed_at is None
+                    or attempt.idempotent_retry_authorized_at
+                    < attempt.completed_at
+                ):
+                    raise OutboxIntegrityError(
+                        "persisted retry authorization is not monotonic"
+                    )
+                if attempt.error_code is not None and (
+                    attempt.error_code not in _SAFE_ERROR_CODES
+                ):
+                    raise OutboxIntegrityError(
+                        "persisted attempt error code is not allowlisted"
+                    )
+                _persisted_optional_hash(
+                    attempt.receiver_receipt_sha256,
+                    "attempt.receiver_receipt_sha256",
+                )
+                _verify_attempt_status_timestamps(attempt)
+                for event_time in (
+                    attempt.claimed_at,
+                    attempt.completed_at,
+                    attempt.reconciled_at,
+                    attempt.idempotent_retry_authorized_at,
+                ):
+                    if event_time is not None and event_time > record.updated_at:
+                        raise OutboxIntegrityError(
+                            "persisted attempt time exceeds outbox update time"
+                        )
+                attempts.append(attempt)
+
+            current_attempt_id = record.current_attempt_id
+            if attempt_count == 0:
+                if current_attempt_id is not None:
+                    raise OutboxIntegrityError(
+                        "outbox without attempts has a current attempt"
+                    )
+            elif current_attempt_id != attempts[-1].attempt_id:
+                raise OutboxIntegrityError(
+                    "outbox current attempt is not the latest attempt"
+                )
+
+            lease_hash = _persisted_optional_hash(
+                row["lease_token_sha256"], "lease_token_sha256"
+            )
+            last_attempt = None if not attempts else attempts[-1]
+            if record.status == "prepared":
+                if attempt_count != 0:
+                    raise OutboxIntegrityError("prepared outbox already has attempts")
+                _require_no_active_or_delivered_state(record, lease_hash)
+            elif record.status == "sending":
+                if last_attempt is None or last_attempt.status != "sending":
+                    raise OutboxIntegrityError(
+                        "sending outbox does not reference a sending attempt"
+                    )
+                if lease_hash is None or record.lease_expires_at is None:
+                    raise OutboxIntegrityError("sending outbox has incomplete lease state")
+                attempt_lease_hash = _persisted_hash(
+                    attempt_rows[-1]["lease_token_sha256"],
+                    "attempt.lease_token_sha256",
+                )
+                if not hmac.compare_digest(lease_hash, attempt_lease_hash):
+                    raise OutboxIntegrityError(
+                        "outbox and attempt lease identities disagree"
+                    )
+                if record.lease_expires_at != last_attempt.lease_expires_at:
+                    raise OutboxIntegrityError(
+                        "outbox and attempt lease expiries disagree"
+                    )
+                if record.delivered_at is not None:
+                    raise OutboxIntegrityError("sending outbox is already delivered")
+            elif record.status == "delivery_unknown":
+                if last_attempt is None or last_attempt.status != "delivery_unknown":
+                    raise OutboxIntegrityError(
+                        "unknown outbox does not reference an unknown attempt"
+                    )
+                if last_attempt.idempotent_retry_authorized_at is not None:
+                    raise OutboxIntegrityError(
+                        "unknown outbox already has retry authorization"
+                    )
+                _require_no_active_or_delivered_state(record, lease_hash)
+            elif record.status == "retryable":
+                if last_attempt is None:
+                    raise OutboxIntegrityError("retryable outbox has no attempt")
+                retry_by_lookup = last_attempt.status == "receiver_not_found"
+                retry_by_idempotency = (
+                    last_attempt.status == "delivery_unknown"
+                    and last_attempt.idempotent_retry_authorized_at is not None
+                )
+                if not (retry_by_lookup or retry_by_idempotency):
+                    raise OutboxIntegrityError(
+                        "retryable outbox has no safe retry basis"
+                    )
+                _require_no_active_or_delivered_state(record, lease_hash)
+            elif record.status == "delivered":
+                if last_attempt is None or last_attempt.status != "delivered":
+                    raise OutboxIntegrityError(
+                        "delivered outbox does not reference a delivered attempt"
+                    )
+                if lease_hash is not None or record.lease_expires_at is not None:
+                    raise OutboxIntegrityError("delivered outbox retains an active lease")
+                if record.delivered_at is None:
+                    raise OutboxIntegrityError("delivered outbox lacks delivered_at")
+                if record.delivered_at < last_attempt.claimed_at:
+                    raise OutboxIntegrityError(
+                        "outbox delivery time predates its final claim"
+                    )
+                if record.delivered_at > record.updated_at:
+                    raise OutboxIntegrityError(
+                        "outbox delivery time exceeds its update time"
+                    )
+            else:  # pragma: no cover - _record_from_row guard
+                raise OutboxIntegrityError("persisted outbox status is invalid")
+            return record
+        except OutboxIntegrityError:
+            raise
+        except Exception as exc:
+            raise OutboxIntegrityError(
+                "persisted daily outbox state failed verification"
+            ) from exc
 
     def _compare_existing_enqueue(
         self,
@@ -882,7 +1276,7 @@ class DailyReportOutbox:
         )
 
     @staticmethod
-    def _verify_persisted_immutable(row: sqlite3.Row) -> None:
+    def _verify_persisted_immutable(row: sqlite3.Row) -> Mapping[str, Any]:
         """Recompute every immutable identity immediately before a send."""
 
         try:
@@ -933,6 +1327,14 @@ class DailyReportOutbox:
             target_hash = _hash_text(
                 row["target_key_sha256"], "persisted target_key_sha256"
             )
+            if _contains_forbidden_target_field(validated):
+                raise OutboxIntegrityError(
+                    "persisted report contains a forbidden delivery target field"
+                )
+            if target_hash in report_json or target_hash in markdown:
+                raise OutboxIntegrityError(
+                    "persisted content contains the delivery target digest"
+                )
             expected_delivery_id = compute_delivery_id(
                 delivery_date=delivery_date,
                 timezone=timezone,
@@ -970,6 +1372,7 @@ class DailyReportOutbox:
             )
             if not hmac.compare_digest(content_hash, expected_content_hash):
                 raise OutboxIntegrityError("persisted report content hash does not verify")
+            return validated
         except OutboxIntegrityError:
             raise
         except Exception as exc:
@@ -1358,6 +1761,97 @@ def _hash_text(value: Any, field_name: str) -> str:
     return value
 
 
+def _target_key_hash(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise OutboxValidationError("target_key must be non-empty text")
+    if len(value) > 8_192:
+        raise OutboxValidationError("target_key is too long")
+    return _hash_text(
+        compute_target_key_sha256(value),
+        "target_key_sha256",
+    )
+
+
+def _persisted_hash(value: Any, field_name: str) -> str:
+    try:
+        return _hash_text(value, f"persisted {field_name}")
+    except OutboxValidationError as exc:
+        raise OutboxIntegrityError(f"persisted {field_name} is invalid") from exc
+
+
+def _persisted_optional_hash(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _persisted_hash(value, field_name)
+
+
+def _persisted_nonnegative_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise OutboxIntegrityError(f"persisted {field_name} is invalid")
+    return value
+
+
+def _persisted_date(value: Any, field_name: str) -> dt.date:
+    try:
+        return _date(value, f"persisted {field_name}")
+    except OutboxValidationError as exc:
+        raise OutboxIntegrityError(f"persisted {field_name} is invalid") from exc
+
+
+def _require_no_active_or_delivered_state(
+    record: OutboxRecord,
+    lease_hash: str | None,
+) -> None:
+    if lease_hash is not None or record.lease_expires_at is not None:
+        raise OutboxIntegrityError(
+            f"{record.status} outbox retains an active lease"
+        )
+    if record.delivered_at is not None:
+        raise OutboxIntegrityError(
+            f"{record.status} outbox unexpectedly has delivered_at"
+        )
+
+
+def _verify_attempt_status_timestamps(attempt: DeliveryAttempt) -> None:
+    if attempt.status == "sending":
+        if any(
+            value is not None
+            for value in (
+                attempt.completed_at,
+                attempt.reconciled_at,
+                attempt.idempotent_retry_authorized_at,
+                attempt.error_code,
+                attempt.receiver_receipt_sha256,
+            )
+        ):
+            raise OutboxIntegrityError(
+                "sending attempt unexpectedly has completion state"
+            )
+    elif attempt.status == "delivery_unknown":
+        if attempt.completed_at is None:
+            raise OutboxIntegrityError("unknown attempt lacks completion time")
+        if attempt.reconciled_at is not None:
+            raise OutboxIntegrityError(
+                "unknown attempt unexpectedly has reconciliation time"
+            )
+        if attempt.error_code is None:
+            raise OutboxIntegrityError("unknown attempt lacks a safe error code")
+    elif attempt.status == "receiver_not_found":
+        if attempt.completed_at is None or attempt.reconciled_at is None:
+            raise OutboxIntegrityError(
+                "receiver-not-found attempt lacks reconciliation times"
+            )
+        if attempt.idempotent_retry_authorized_at is not None:
+            raise OutboxIntegrityError(
+                "receiver-not-found attempt also has idempotent authorization"
+            )
+    elif attempt.status == "delivered":
+        if attempt.completed_at is None:
+            raise OutboxIntegrityError("delivered attempt lacks completion time")
+    else:  # pragma: no cover - DeliveryAttempt parser guard
+        raise OutboxIntegrityError("persisted attempt status is invalid")
+
+
 def _optional_hash_text(value: Any, field_name: str) -> str | None:
     if value is None:
         return None
@@ -1464,6 +1958,7 @@ def _contains_forbidden_target_field(value: Any) -> bool:
 __all__ = [
     "DailyOutboxError",
     "DailyReportOutbox",
+    "DeliveredCheckpoint",
     "DeliveryAdapterCapabilities",
     "DeliveryAttempt",
     "DeliveryClaim",
@@ -1472,6 +1967,7 @@ __all__ = [
     "OutboxIdempotencyConflict",
     "OutboxIntegrityError",
     "OutboxLeaseError",
+    "OutboxContent",
     "OutboxRecord",
     "OutboxStateError",
     "OutboxValidationError",

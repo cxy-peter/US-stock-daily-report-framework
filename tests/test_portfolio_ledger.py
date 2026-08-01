@@ -23,7 +23,12 @@ from serenity_monitor.portfolio_ledger import (
     PortfolioLedger,
     PortfolioLedgerError,
 )
-from serenity_monitor.provider_registry import AcceptedClose, AcceptedCloseBatch, InstrumentRef
+from serenity_monitor.provider_registry import (
+    AcceptedClose,
+    AcceptedCloseBatch,
+    CloseObservation,
+    InstrumentRef,
+)
 
 
 SESSION_0 = dt.date(2026, 7, 29)
@@ -54,7 +59,7 @@ def _accepted_batch(
 ) -> AcceptedCloseBatch:
     """Build an offline accepted-close contract without provider calls."""
     closes: list[AcceptedClose] = []
-    for index, (raw_symbol, raw_price) in enumerate(sorted(prices.items())):
+    for raw_symbol, raw_price in sorted(prices.items()):
         symbol = raw_symbol.upper()
         price = Decimal(str(raw_price))
         instrument = InstrumentRef(
@@ -73,18 +78,53 @@ def _accepted_batch(
                 "salt": batch_salt,
             }
         )
+        observations = tuple(
+            CloseObservation(
+                provider_id=f"test-{provider_name}",
+                provider_version="fixture-v1",
+                independence_group=f"fixture-{provider_name}",
+                source_tier=provider_name,
+                settlement_eligible=True,
+                canonical_symbol=symbol,
+                provider_symbol=symbol,
+                asset_type="etf",
+                exchange_mic="XNAS",
+                session_date=session,
+                raw_close=price,
+                currency="USD",
+                exchange_timezone="America/New_York",
+                bar_kind="regular_session_close",
+                adjustment_mode="none",
+                price_unit_multiplier=Decimal("1"),
+                retrieved_at=dt.datetime.combine(
+                    session,
+                    dt.time(22, 0),
+                    tzinfo=dt.timezone.utc,
+                ),
+                payload_sha256=_digest(
+                    {"provider": provider_name, "symbol": symbol, "price": price}
+                ),
+                finality="final",
+                corporate_action_status="clear_none",
+                provider_drift_status="healthy",
+                calendar_id="XNAS",
+            )
+            for provider_name in ("primary", "secondary")
+        )
         closes.append(
             AcceptedClose(
                 accepted_close_id=close_id,
                 instrument=instrument,
                 expected_session=session,
                 status="accepted" if permitted else "blocked",
-                selected_observation_id=f"{index + 1:064x}" if permitted else None,
+                selected_observation_id=(
+                    observations[0].observation_id if permitted else None
+                ),
                 selected_price=price if permitted else None,
                 currency="USD",
                 agreement_bps=Decimal("0"),
                 independent_source_count=2 if permitted else 1,
-                observations=(),
+                observations=observations,
                 attempts=(),
                 reasons=() if permitted else ("synthetic_price_gate_block",),
                 valuation_permitted=permitted,
@@ -347,6 +387,88 @@ def test_same_session_rerun_is_idempotent_but_changed_plan_or_close_conflicts(tm
     assert _event_count(ledger) == 3
 
 
+def test_dca_rechecks_real_two_source_lineage_instead_of_gate_booleans(tmp_path):
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
+    ledger.initialize(SESSION_0, Decimal("100"))
+    plan = DcaPlan("daily-base", "v1", {"AAA": Decimal("20")})
+    valid = _accepted_batch({"AAA": "10"}, SESSION_1)
+    close = valid.closes[0]
+    duplicate_group_observations = (
+        close.observations[0],
+        replace(
+            close.observations[1],
+            independence_group=close.observations[0].independence_group,
+        ),
+    )
+    research_observations = tuple(
+        replace(item, source_tier="research_only") for item in close.observations
+    )
+    invalid_closes = (
+        replace(
+            close,
+            observations=(),
+            selected_observation_id="f" * 64,
+            independent_source_count=2,
+        ),
+        replace(close, observations=duplicate_group_observations),
+        replace(
+            close,
+            observations=research_observations,
+            selected_observation_id=research_observations[0].observation_id,
+        ),
+    )
+    before = _event_count(ledger)
+
+    for invalid_close in invalid_closes:
+        with pytest.raises(LedgerSettlementBlocked, match="(?i)(source|lineage)"):
+            ledger.settle_modeled_dca_batch(
+                plan,
+                replace(valid, closes=(invalid_close,)),
+                calendar_as_of=AFTER_SESSION_2,
+                corporate_action_statuses=_statuses("AAA"),
+            )
+        assert _event_count(ledger) == before
+
+
+def test_symbol_level_dca_receipts_are_immutable_and_identical_on_replay(tmp_path):
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
+    ledger.initialize(SESSION_0, Decimal("100"))
+    plan = DcaPlan(
+        "daily-base",
+        "v1",
+        {"AAA": Decimal("20"), "BBB": Decimal("20")},
+        share_scale=2,
+    )
+    accepted = _accepted_batch({"AAA": "6", "BBB": "7"})
+
+    first = ledger.settle_modeled_dca_batch(
+        plan,
+        accepted,
+        calendar_as_of=AFTER_SESSION_2,
+        corporate_action_statuses=_statuses("AAA", "BBB"),
+    )
+    replay = ledger.settle_modeled_dca_batch(
+        plan,
+        accepted,
+        calendar_as_of=AFTER_SESSION_2,
+        corporate_action_statuses=_statuses("AAA", "BBB"),
+    )
+
+    assert replay.idempotent_replay is True
+    assert replay.fill_receipts == first.fill_receipts
+    assert replay.fill_event_ids == first.fill_event_ids
+    assert tuple(item.symbol for item in first.fill_receipts) == ("AAA", "BBB")
+    aaa = first.receipts_by_symbol["AAA"]
+    assert aaa.quantity == Decimal("3.33")
+    assert aaa.price == Decimal("6")
+    assert aaa.spend == Decimal("19.98")
+    assert aaa.residual == Decimal("0.02")
+    assert aaa.accepted_close_id == accepted.by_symbol["AAA"].accepted_close_id
+    assert aaa.settlement_event_id == first.fill_event_ids[0]
+    with pytest.raises(TypeError):
+        first.receipts_by_symbol["AAA"] = aaa
+
+
 def test_external_contribution_and_existing_cash_funding_conserve_cash(tmp_path):
     external = PortfolioLedger(tmp_path / "external.sqlite")
     external.initialize(SESSION_0, Decimal("0"))
@@ -538,6 +660,13 @@ def test_explicit_skip_records_no_modeled_fill(tmp_path):
     assert result.fill_event_ids == ()
     assert ledger.project("modeled").positions == ()
     assert ledger.project("modeled").cash == Decimal("100")
+    audit = ledger.session_audit(SESSION_1)
+    assert audit.dca_settlement is None
+    assert audit.has_owner_skip is True
+    assert audit.owner_skip is not None
+    assert audit.owner_skip.override_event_id == override_id
+    assert audit.owner_skip.plan_id == plan.plan_id
+    assert audit.owner_skip.plan_version == plan.version
 
 
 def test_close_funded_dca_creates_no_same_day_return(tmp_path):
@@ -606,6 +735,300 @@ def test_daily_returns_chain_into_cumulative_time_weighted_return(tmp_path):
     assert down.cumulative_twr == Decimal("-0.01")
 
 
+def test_valuation_lineage_prior_values_and_public_recovery_api(tmp_path):
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
+    ledger.initialize(
+        SESSION_0,
+        Decimal("100"),
+        [OpeningPosition("AAA", Decimal("1"), Decimal("10"))],
+    )
+    checkpoint = ledger.opening_checkpoint()
+    assert checkpoint.session == SESSION_0
+    assert checkpoint.cash == Decimal("100")
+    assert checkpoint.positions == (
+        OpeningPosition("AAA", Decimal("1"), Decimal("10")),
+    )
+    assert ledger.contains_event_hash(checkpoint.opening_event_hash) is True
+    assert ledger.contains_event_hash("f" * 64) is False
+    with pytest.raises(LedgerValidationError, match="SHA-256"):
+        ledger.contains_event_hash("not-a-hash")
+
+    opening_close = _accepted_batch({"AAA": "10"}, SESSION_0)
+    confirmed_opening = ledger.record_valuation("confirmed", opening_close)
+    modeled_opening = ledger.record_valuation("modeled", opening_close)
+    assert confirmed_opening.prior_nav is None
+    assert confirmed_opening.prior_cumulative_twr is None
+    assert confirmed_opening.accepted_close_lineage[
+        "AAA"
+    ].accepted_close_id == opening_close.by_symbol["AAA"].accepted_close_id
+    assert confirmed_opening.accepted_close_lineage[
+        "AAA"
+    ].selected_provider_id == "test-primary"
+    with pytest.raises(TypeError):
+        confirmed_opening.accepted_close_lineage["AAA"] = confirmed_opening.accepted_close_lineage[
+            "AAA"
+        ]
+    with pytest.raises(TypeError):
+        confirmed_opening.prices["AAA"] = Decimal("999")
+
+    plan = DcaPlan(
+        "daily-base",
+        "v1",
+        {"AAA": Decimal("20")},
+        funding_mode="modeled_external_contribution",
+    )
+    session_close = _accepted_batch({"AAA": "20"}, SESSION_1)
+    settled = ledger.settle_modeled_dca_batch(
+        plan,
+        session_close,
+        calendar_as_of=AFTER_SESSION_2,
+        corporate_action_statuses=_statuses("AAA"),
+    )
+    confirmed = ledger.record_valuation("confirmed", session_close)
+
+    partial = ledger.session_audit(SESSION_1)
+    assert partial.dca_settlement is not None
+    assert partial.dca_settlement.fill_receipts == settled.fill_receipts
+    assert partial.confirmed_valuation == confirmed
+    assert partial.modeled_valuation is None
+    assert partial.valuation_state == "partial"
+    assert partial.has_partial_valuation is True
+    assert ledger.latest_common_valuation_session() == SESSION_0
+
+    modeled = ledger.record_valuation("modeled", session_close)
+    assert confirmed.prior_nav == confirmed_opening.nav
+    assert confirmed.prior_cumulative_twr == confirmed_opening.cumulative_twr
+    assert modeled.prior_nav == modeled_opening.nav
+    assert modeled.prior_cumulative_twr == modeled_opening.cumulative_twr
+    assert ledger.valuation_at("confirmed", SESSION_1) == confirmed
+    assert ledger.valuation_at("confirmed", SESSION_2) is None
+
+    completed = ledger.session_audit(SESSION_1)
+    assert completed.valuation_state == "complete"
+    assert completed.has_partial_valuation is False
+    assert ledger.contains_event_hash(completed.last_event_hash) is True
+    common = ledger.latest_common_valuation()
+    assert common is not None
+    assert common.session == SESSION_1
+    assert common.confirmed == confirmed
+    assert common.modeled == modeled
+
+
+def test_complete_valuations_without_marker_require_an_explicit_active_owner_skip(tmp_path):
+    anomalous = PortfolioLedger(tmp_path / "anomalous.sqlite")
+    anomalous.initialize(
+        SESSION_0,
+        Decimal("0"),
+        [OpeningPosition("AAA", Decimal("1"), Decimal("10"))],
+    )
+    close = _accepted_batch({"AAA": "11"}, SESSION_1)
+    anomalous.record_valuation("confirmed", close)
+    anomalous.record_valuation("modeled", close)
+
+    audit = anomalous.session_audit(SESSION_1)
+    assert audit.valuation_state == "complete"
+    assert audit.dca_settlement is None
+    assert audit.owner_skip is None
+    assert audit.has_owner_skip is False
+
+    explicit = PortfolioLedger(tmp_path / "explicit.sqlite")
+    explicit.initialize(
+        SESSION_0,
+        Decimal("0"),
+        [OpeningPosition("AAA", Decimal("1"), Decimal("10"))],
+    )
+    override_id = explicit.record_dca_override(
+        SESSION_1,
+        "daily-base",
+        "v1",
+        reason="owner intentionally skipped",
+    )
+    explicit.record_valuation("confirmed", close)
+    explicit.record_valuation("modeled", close)
+
+    explicit_audit = explicit.session_audit(SESSION_1)
+    assert explicit_audit.valuation_state == "complete"
+    assert explicit_audit.dca_settlement is None
+    assert explicit_audit.has_owner_skip is True
+    assert explicit_audit.owner_skip is not None
+    assert explicit_audit.owner_skip.override_event_id == override_id
+    assert explicit_audit.owner_skip.plan_id == "daily-base"
+    assert explicit_audit.owner_skip.plan_version == "v1"
+
+    reversed_ledger = PortfolioLedger(tmp_path / "reversed.sqlite")
+    reversed_ledger.initialize(SESSION_0, Decimal("100"))
+    reversed_override = reversed_ledger.record_dca_override(
+        SESSION_1,
+        "daily-base",
+        "v1",
+        reason="temporary owner skip",
+    )
+    reversed_ledger.reverse_event(
+        reversed_override,
+        reason="owner restored the base plan",
+        idempotency_key="reverse-owner-skip",
+    )
+    reversed_audit = reversed_ledger.session_audit(SESSION_1)
+    assert reversed_audit.owner_skip is None
+    assert reversed_audit.has_owner_skip is False
+
+
+def test_valuation_requires_final_multi_source_atomic_close_lineage(tmp_path):
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
+    ledger.initialize(
+        SESSION_0,
+        Decimal("0"),
+        [OpeningPosition("AAA", Decimal("1"), Decimal("10"))],
+    )
+    valid = _accepted_batch({"AAA": "11"}, SESSION_1)
+    close = valid.closes[0]
+    research_observations = tuple(
+        replace(item, source_tier="research_only") for item in close.observations
+    )
+    invalid_batches = (
+        replace(valid, status="blocked"),
+        replace(valid, closes=(replace(close, finality="provisional"),)),
+        replace(valid, closes=(replace(close, independent_source_count=1),)),
+        replace(valid, closes=(replace(close, observations=(close.observations[0],)),)),
+        replace(
+            valid,
+            closes=(replace(close, reasons=("test-secondary:rejected_fixture",)),),
+        ),
+        replace(
+            valid,
+            closes=(
+                replace(
+                    close,
+                    observations=research_observations,
+                    selected_observation_id=research_observations[0].observation_id,
+                ),
+            ),
+        ),
+        replace(valid, closes=(replace(close, atomic_batch_permitted=False),)),
+        replace(valid, closes=(replace(close, selected_observation_id="f" * 64),)),
+    )
+    before = _event_count(ledger)
+
+    for batch in invalid_batches:
+        with pytest.raises(LedgerSettlementBlocked):
+            ledger.record_valuation("modeled", batch)
+        assert _event_count(ledger) == before
+
+    warned_final = replace(
+        valid,
+        closes=(replace(close, status="warning", finality="confirmed_with_warning"),),
+    )
+    valuation = ledger.record_valuation("modeled", warned_final)
+    assert valuation.nav == Decimal("11")
+
+
+def test_legacy_valuation_payload_fails_closed_with_explicit_migration_error(tmp_path):
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
+    ledger.initialize(SESSION_0, Decimal("100"))
+    with ledger._transaction() as connection:
+        ledger._append_event(
+            connection,
+            event_type="valuation",
+            source_class="system",
+            session=SESSION_1,
+            occurred_at=f"{SESSION_1.isoformat()}T23:59:59Z",
+            idempotency_key="legacy-valuation-fixture",
+            payload={
+                "book_kind": "modeled",
+                "accepted_close_batch_id": "a" * 64,
+                "currency": "USD",
+                "cash": Decimal("100"),
+                "securities_value": Decimal("0"),
+                "nav": Decimal("100"),
+                "prices": {},
+                "daily_pnl": None,
+                "daily_return": None,
+                "cumulative_twr": None,
+                "net_external_flow": Decimal("0"),
+                "weighted_external_flow": Decimal("0"),
+            },
+        )
+
+    assert ledger.verify_hash_chain() is True
+    with pytest.raises(LedgerIntegrityError, match="legacy valuation payload"):
+        ledger.valuation_at("modeled", SESSION_1)
+    with pytest.raises(LedgerIntegrityError, match="legacy valuation payload"):
+        ledger.latest_common_valuation_session()
+    with pytest.raises(LedgerIntegrityError, match="legacy valuation payload"):
+        ledger.project("modeled")
+    with sqlite3.connect(ledger.database_path) as connection:
+        before_count = connection.execute("SELECT COUNT(*) FROM ledger_events").fetchone()[0]
+    with pytest.raises(LedgerIntegrityError, match="legacy valuation payload"):
+        ledger.record_cash_flow(
+            SESSION_2,
+            Decimal("1"),
+            idempotency_key="must-not-extend-legacy-ledger",
+        )
+    with sqlite3.connect(ledger.database_path) as connection:
+        after_count = connection.execute("SELECT COUNT(*) FROM ledger_events").fetchone()[0]
+    assert after_count == before_count
+
+
+def test_hash_valid_v2_valuation_cannot_forge_its_actual_prior_chain(tmp_path):
+    ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
+    ledger.initialize(
+        SESSION_0,
+        Decimal("0"),
+        [OpeningPosition("AAA", Decimal("1"), Decimal("100"))],
+    )
+    baseline = ledger.record_valuation(
+        "modeled",
+        _accepted_batch({"AAA": "100"}, SESSION_0),
+    )
+    with ledger._transaction() as connection:
+        ledger._append_event(
+            connection,
+            event_type="valuation",
+            source_class="system",
+            session=SESSION_1,
+            occurred_at=f"{SESSION_1.isoformat()}T23:59:59Z",
+            idempotency_key="forged-v2-prior-fixture",
+            payload={
+                "contract_version": "ledger_valuation/v2",
+                "input_hash": "d" * 64,
+                "book_kind": "modeled",
+                "accepted_close_batch_id": "b" * 64,
+                "currency": "USD",
+                "cash": Decimal("0"),
+                "securities_value": Decimal("200"),
+                "nav": Decimal("200"),
+                "prices": {"AAA": Decimal("200")},
+                "accepted_close_lineage": {
+                    "AAA": {
+                        "accepted_close_id": "c" * 64,
+                        "selected_provider_id": "test-primary",
+                    }
+                },
+                "prior_nav": Decimal("50"),
+                "prior_cumulative_twr": None,
+                "daily_pnl": Decimal("150"),
+                "daily_return": Decimal("3"),
+                "cumulative_twr": Decimal("3"),
+                "net_external_flow": Decimal("0"),
+                "weighted_external_flow": Decimal("0"),
+                "cumulative_external_flow": Decimal("0"),
+                "previous_valuation_event_id": baseline.valuation_event_id,
+            },
+        )
+
+    assert ledger.verify_hash_chain() is True
+    for read_only_api in (
+        lambda: ledger.valuation_at("modeled", SESSION_1),
+        lambda: ledger.session_audit(SESSION_1),
+        ledger.latest_common_valuation_session,
+        ledger.opening_checkpoint,
+        lambda: ledger.project("modeled"),
+        lambda: ledger.contains_event_hash("f" * 64),
+    ):
+        with pytest.raises(LedgerIntegrityError, match="prior NAV or TWR"):
+            read_only_api()
+
+
 def test_mid_transaction_failure_rolls_back_every_dca_event(tmp_path, monkeypatch):
     ledger = PortfolioLedger(tmp_path / "ledger.sqlite")
     ledger.initialize(SESSION_0, Decimal("100"))
@@ -669,6 +1092,15 @@ def test_hash_chain_detects_payload_tampering(tmp_path):
 
     with pytest.raises(LedgerIntegrityError):
         ledger.verify_hash_chain()
+    for read_only_api in (
+        ledger.opening_checkpoint,
+        ledger.latest_common_valuation_session,
+        lambda: ledger.valuation_at("modeled", SESSION_1),
+        lambda: ledger.session_audit(SESSION_1),
+        lambda: ledger.contains_event_hash("f" * 64),
+    ):
+        with pytest.raises(LedgerIntegrityError):
+            read_only_api()
 
 
 def test_all_ledger_workflows_are_offline_and_expose_no_broker_or_order_method(

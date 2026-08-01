@@ -36,6 +36,13 @@ repository commit or branch is part of this provenance.
 - a deterministic Chinese Markdown view plus a local immutable SQLite outbox
   that fails closed unless a delivery adapter supports receiver lookup or a
   stable idempotency key;
+- a private daily prepare runtime that recovers from the last delivered ledger
+  checkpoint, performs oldest-first settlement, stops after the first failed
+  gate, persists content-addressed JSON/Markdown and enqueues one receiver/day
+  slot without any broker or order capability;
+- strict environment-only production entrypoints, external non-cloud/non-Git
+  storage gates, same-handle config reads, POSIX ownership/modes and protected
+  Windows owner-only ACL verification;
 - private-runtime JSON audit artifacts and focused regression tests;
 - this status record, so later work can distinguish code from proposals.
 
@@ -43,8 +50,8 @@ repository commit or branch is part of this provenance.
 
 - an automated corporate-action source and reconciliation workflow (the ledger
   already enforces an explicit per-symbol reconciliation gate);
-- the private orchestration runtime that builds the daily contract from the
-  accepted-close registry, calendar, ledger and research engine;
+- integration of the legacy research council, objective-risk layer, social
+  attention and fund monitor into the new ledger-backed daily runtime;
 - a verified GPT receiver adapter and recurring private delivery deployment;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;
@@ -61,6 +68,6 @@ point-in-time fixtures and focused tests. It must not be marked complete from a
 document description alone.
 
 The accepted-close registry, calendar, private ledger and daily-report/outbox
-are composable contracts, but are not yet connected to `run_report.py` or
-recurring GPT delivery. None of these modules connects to a broker or submits
-an order.
+are connected by a separate private prepare runtime rather than legacy
+`run_report.py`. Recurring GPT delivery is not yet enabled. None of these
+modules connects to a broker or submits an order.

@@ -10,7 +10,9 @@ import pytest
 
 from serenity_monitor.daily_outbox import (
     DailyReportOutbox,
+    DeliveredCheckpoint,
     DeliveryAdapterCapabilities,
+    OutboxContent,
     OutboxCapabilityError,
     OutboxIdempotencyConflict,
     OutboxIntegrityError,
@@ -179,6 +181,26 @@ def _report(
     )
 
 
+def _dated_report(
+    delivery_date: dt.date,
+    *,
+    target: str = TARGET,
+    ledger_hash: str | None = LEDGER_HASH,
+) -> dict:
+    prepared_at = dt.datetime.combine(
+        delivery_date,
+        dt.time(5, 15),
+        tzinfo=UTC,
+    ).isoformat().replace("+00:00", "Z")
+    draft = _unfinished_report(prepared_at=prepared_at)
+    draft["delivery"]["delivery_date"] = delivery_date.isoformat()
+    draft["portfolio"]["ledger_last_event_hash"] = ledger_hash
+    return finalize_private_daily_report(
+        draft,
+        target_key_sha256=compute_target_key_sha256(target),
+    )
+
+
 def _outbox(tmp_path: Path) -> DailyReportOutbox:
     return DailyReportOutbox(tmp_path / "private" / "daily-outbox.sqlite3")
 
@@ -296,6 +318,246 @@ def test_target_and_secret_tokens_never_persist_as_plaintext(tmp_path: Path) -> 
     assert claim.lease_token.encode() not in persisted
     assert receipt.encode() not in persisted
     assert compute_target_key_sha256(TARGET).encode() in persisted
+
+
+def test_find_slot_hashes_raw_target_and_returns_only_sanitized_state(
+    tmp_path: Path,
+) -> None:
+    outbox = _outbox(tmp_path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+
+    slot = outbox.find_slot(TARGET, "codex", dt.date(2026, 8, 1))
+
+    assert slot is not None
+    assert slot.delivery_id == result.delivery_id
+    assert slot.target_key_sha256 == compute_target_key_sha256(TARGET)
+    assert TARGET not in repr(slot)
+    assert outbox.find_slot(TARGET + "-other", "codex", "2026-08-01") is None
+    assert outbox.find_slot(TARGET, "other", "2026-08-01") is None
+    assert outbox.find_slot(TARGET, "codex", "2026-08-02") is None
+
+
+def test_latest_delivered_checkpoint_uses_newest_delivered_report(
+    tmp_path: Path,
+) -> None:
+    outbox = _outbox(tmp_path)
+    day_one = dt.date(2026, 8, 1)
+    day_two = dt.date(2026, 8, 2)
+    hash_two = "2" * 64
+
+    first = outbox.enqueue(
+        _dated_report(day_one), TARGET, LEDGER_HASH, now=NOW
+    )
+    first_claim = outbox.claim(first.delivery_id, IDEMPOTENT, now=NOW)
+    outbox.mark_delivered(
+        first.delivery_id,
+        first_claim.lease_token,
+        delivered_at=NOW + dt.timedelta(seconds=1),
+    )
+    day_two_now = NOW + dt.timedelta(days=1)
+    second = outbox.enqueue(
+        _dated_report(day_two, ledger_hash=hash_two),
+        TARGET,
+        hash_two,
+        now=day_two_now,
+    )
+    second_claim = outbox.claim(second.delivery_id, IDEMPOTENT, now=day_two_now)
+    outbox.mark_delivered(
+        second.delivery_id,
+        second_claim.lease_token,
+        delivered_at=day_two_now + dt.timedelta(seconds=1),
+    )
+
+    checkpoint = outbox.latest_delivered_checkpoint(TARGET, "codex")
+
+    assert isinstance(checkpoint, DeliveredCheckpoint)
+    assert checkpoint.delivery_date == day_two
+    assert checkpoint.portfolio_as_of_session == dt.date(2026, 7, 31)
+    assert checkpoint.ledger_last_event_hash == hash_two
+    assert TARGET not in repr(checkpoint)
+    assert outbox.latest_delivered_checkpoint(TARGET + "-other", "codex") is None
+
+
+@pytest.mark.parametrize(
+    "pending_status",
+    ["prepared", "sending", "delivery_unknown", "retryable"],
+)
+def test_oldest_pending_recognizes_every_blocking_state(
+    tmp_path: Path,
+    pending_status: str,
+) -> None:
+    outbox = _outbox(tmp_path)
+    report = _dated_report(dt.date(2026, 8, 1))
+    result = outbox.enqueue(report, TARGET, LEDGER_HASH, now=NOW)
+    if pending_status != "prepared":
+        claim = outbox.claim(result.delivery_id, BOTH, now=NOW)
+        if pending_status in {"delivery_unknown", "retryable"}:
+            outbox.mark_unknown(
+                result.delivery_id,
+                claim.lease_token,
+                observed_at=NOW + dt.timedelta(seconds=1),
+            )
+        if pending_status == "retryable":
+            outbox.reconcile_unknown(
+                result.delivery_id,
+                receiver_status="not_found",
+                capabilities=BOTH,
+                reconciled_at=NOW + dt.timedelta(seconds=2),
+            )
+
+    pending = outbox.oldest_pending(
+        TARGET,
+        "codex",
+        before_delivery_date="2026-08-02",
+    )
+
+    assert pending is not None
+    assert pending.delivery_id == result.delivery_id
+    assert pending.status == pending_status
+    assert outbox.oldest_pending(
+        TARGET,
+        "codex",
+        before_delivery_date="2026-08-01",
+    ) is None
+
+
+def test_oldest_pending_is_chronological_not_insertion_order(tmp_path: Path) -> None:
+    outbox = _outbox(tmp_path)
+    later_now = NOW + dt.timedelta(days=2)
+    later = outbox.enqueue(
+        _dated_report(dt.date(2026, 8, 3)),
+        TARGET,
+        LEDGER_HASH,
+        now=later_now,
+    )
+    earlier_now = NOW + dt.timedelta(days=1)
+    earlier = outbox.enqueue(
+        _dated_report(dt.date(2026, 8, 2)),
+        TARGET,
+        LEDGER_HASH,
+        now=earlier_now,
+    )
+
+    pending = outbox.oldest_pending(TARGET, "codex")
+
+    assert pending is not None
+    assert pending.delivery_id == earlier.delivery_id
+    assert pending.delivery_id != later.delivery_id
+
+
+def test_load_validated_content_is_identity_only_and_repr_redacted(
+    tmp_path: Path,
+) -> None:
+    outbox = _outbox(tmp_path)
+    report = _report()
+    result = outbox.enqueue(report, TARGET, LEDGER_HASH, now=NOW)
+
+    content = outbox.load_validated_content(result.delivery_id)
+
+    assert isinstance(content, OutboxContent)
+    assert content.report == report
+    assert content.markdown == render_private_daily_markdown(report)
+    assert content.report_id == result.report_id
+    assert content.delivery_id == result.delivery_id
+    assert TARGET not in repr(content)
+    assert "Synthetic." not in repr(content)
+
+
+def test_sensitive_dataclass_repr_omits_scopes_content_and_lease(
+    tmp_path: Path,
+) -> None:
+    outbox = _outbox(tmp_path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+    claim = outbox.claim(result.delivery_id, BOTH, now=NOW)
+
+    assert BOTH.idempotency_scope not in repr(BOTH)
+    assert BOTH.lookup_scope not in repr(BOTH)
+    assert claim.lease_token not in repr(claim)
+    assert claim.markdown not in repr(claim)
+    assert "Synthetic." not in repr(claim)
+
+
+@pytest.mark.parametrize(
+    "query_name",
+    ["find_slot", "latest_delivered_checkpoint", "oldest_pending", "content"],
+)
+def test_runtime_preflight_queries_fail_closed_on_tampered_content(
+    tmp_path: Path,
+    query_name: str,
+) -> None:
+    path = tmp_path / "private" / "daily-outbox.sqlite3"
+    outbox = DailyReportOutbox(path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TRIGGER daily_report_outbox_immutable")
+        connection.execute(
+            "UPDATE daily_report_outbox SET markdown = '# Tampered' WHERE outbox_id = ?",
+            (result.outbox_id,),
+        )
+        connection.commit()
+
+    with pytest.raises(OutboxIntegrityError):
+        if query_name == "find_slot":
+            outbox.find_slot(TARGET, "codex", "2026-08-01")
+        elif query_name == "latest_delivered_checkpoint":
+            outbox.latest_delivered_checkpoint(TARGET, "codex")
+        elif query_name == "oldest_pending":
+            outbox.oldest_pending(TARGET, "codex")
+        else:
+            outbox.load_validated_content(result.delivery_id)
+
+
+def test_slot_lookup_cannot_hide_tampered_target_digest(tmp_path: Path) -> None:
+    path = tmp_path / "private" / "daily-outbox.sqlite3"
+    outbox = DailyReportOutbox(path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TRIGGER daily_report_outbox_immutable")
+        connection.execute(
+            "UPDATE daily_report_outbox SET target_key_sha256 = ? WHERE outbox_id = ?",
+            ("f" * 64, result.outbox_id),
+        )
+        connection.commit()
+
+    with pytest.raises(OutboxIntegrityError):
+        outbox.find_slot(TARGET, "codex", "2026-08-01")
+
+
+def test_slot_lookup_fails_closed_on_impossible_mutable_state(tmp_path: Path) -> None:
+    path = tmp_path / "private" / "daily-outbox.sqlite3"
+    outbox = DailyReportOutbox(path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TRIGGER daily_report_outbox_status_transition")
+        connection.execute(
+            "UPDATE daily_report_outbox SET status = 'delivered', delivered_at = ? "
+            "WHERE outbox_id = ?",
+            (NOW.isoformat(), result.outbox_id),
+        )
+        connection.commit()
+
+    with pytest.raises(OutboxIntegrityError, match="delivered outbox"):
+        outbox.find_slot(TARGET, "codex", "2026-08-01")
+
+
+def test_preflight_queries_never_persist_raw_target(tmp_path: Path) -> None:
+    path = tmp_path / "private" / "daily-outbox.sqlite3"
+    outbox = DailyReportOutbox(path)
+    result = outbox.enqueue(_report(), TARGET, LEDGER_HASH, now=NOW)
+
+    outbox.find_slot(TARGET, "codex", "2026-08-01")
+    outbox.latest_delivered_checkpoint(TARGET, "codex")
+    outbox.oldest_pending(TARGET, "codex")
+    outbox.load_validated_content(result.delivery_id)
+    with outbox._connect() as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    persisted = b"".join(
+        candidate.read_bytes()
+        for candidate in path.parent.glob(path.name + "*")
+        if candidate.is_file()
+    )
+    assert TARGET.encode() not in persisted
 
 
 def test_report_rejects_raw_target_inside_persisted_content(tmp_path: Path) -> None:
