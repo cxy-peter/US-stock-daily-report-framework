@@ -1,73 +1,53 @@
 # Public Release Manifest
 
-## Delivery identity
+## Repository class
 
-- Repository class: history-free public framework
-- Delivery label: `v2.3 privacy-audited framework root`
+- history-free public framework;
+- source, synthetic fixtures, tests and methodology only;
+- no owner portfolio, credentials, reports or private runtime state;
+- no broker order endpoint.
 
-## What is verified in source
+## Verified capability groups
 
-- existing v2.2 policy, market-state, portfolio, KOL, SEC, X and Reddit controls;
-- an authorized-file Xiaohongshu research overlay that cannot create trades;
-- objective volatility, credit and breadth confirmation groups;
-- downside-only risk-budget tightening with mock and stale-data isolation;
-- Cboe official VIX/VIX3M history plus market-data fallbacks;
-- HXC context with an explicitly labelled KWEB ETF fallback;
-- private-runtime China retail attention and objective-market JSON audit artifacts;
-- raw-close consensus from Twelve Data and Alpha Vantage with an atomic
-  accepted-close price gate, documented exact-date Twelve Data requests and
-  rejected-observation source-health handling;
-- pinned U.S. exchange-calendar resolution for holidays, DST and early closes;
-- an offline append-only confirmed/modeled portfolio ledger with atomic base
-  DCA, owner-event corrections, accepted-close valuation and TWR;
-- a closed private daily-report v1.1 JSON contract with v1.0 replay support,
-  version-aware deterministic Chinese Markdown and an immutable local delivery
-  outbox;
-- the complete `evaluate-us-funds` Skill and quantitative self-test.
-- deterministic Social Heat, prediction calibration and fund-monitor engines,
-  plus an owner-only sanitized aggregate snapshot publisher and monotonic
-  transport into the private daily report; none has trade authority.
+- evidence credibility, independence and manipulation gates;
+- deterministic portfolio/risk constraints and recurring-plan review;
+- objective volatility, credit and breadth downside overlay;
+- accepted-close consensus from Twelve Data and Alpha Vantage;
+- exchange calendar, confirmed/modeled ledger and owner-attested events;
+- versioned private daily-report contract, Markdown and immutable local outbox;
+- authorized Social Heat and append-only prediction research ledger;
+- institutional U.S. fund/product Skill and offline monitor;
+- optional Pro suite for Trump policy transmission, point-in-time Polymarket
+  studies, Barra-inspired factor risk, Kalman exposure and manager skill/
+  fragility;
+- persistent `PROJECT_CONTRACT.yaml` and synthetic one-report smoke test.
 
-## Verification performed
+## Public CI boundary
 
-- Python compile check: passed;
-- public-tree privacy check: passed;
-- regression suite: passed on Linux public CI;
-- fund-research Skill self-test: passed;
-- deterministic mock report smoke test: passed;
-- no live account report or private runtime input was used for this delivery.
+Public CI runs compilation, privacy and project-contract gates, the full test
+suite and legacy/Pro synthetic smoke reports on Linux and Windows. It has no
+schedule, live source credentials, report Summary, artifact upload or report
+persistence.
 
 ## Safety boundaries
 
-- Xiaohongshu ingestion requires a user-authorized export and a rights
-  attestation. Missing authorization is reported as blocked with zero weight.
-- Xiaohongshu, X and Reddit share one `social_media` correlation group.
-- Social data is research-only and cannot trigger a trade or directly size a
-  position.
-- The public workflow does not publish reports, summaries or artifacts. Private
-  outputs retain aggregate/topic social output only; record-level social
-  hashes, timestamps and engagement are removed before persistence.
-- Public configuration and tests are synthetic; real portfolio, KOL and source
-  configuration paths are gitignored and fail closed when misclassified.
-- The initial Xiaohongshu execution weight is zero. A future validated
-  candidate is hard-capped at 2% of the decision score, not 2% of NAV.
-- Objective signals may only reduce risk after independent confirmation; they
-  may never increase risk or create an order.
-- No broker execution or unrestricted external-social collection was run.
-- Modeled DCA is explicitly not a broker-confirmed execution. One active batch
-  is allowed per ledger session, and either book's valuation freezes that and
-  all earlier sessions against silent backfill.
-- The report outbox derives Markdown from validated JSON, stores only receiver
-  namespace/receipt digests, and refuses unsafe blind retries or adapter-scope
-  changes after an ambiguous send.
-- A recurring private runtime and verified GPT delivery adapter are not yet
-  deployed; the public workflow remains unscheduled and synthetic-only.
+- social sources share one correlated evidence group and cannot independently
+  trade or increase DCA;
+- Xiaohongshu direct execution weight remains zero;
+- Trump and Polymarket overlays are bounded research inputs, not trade triggers;
+- modeled DCA is not broker-confirmed execution;
+- accepted-close validation is only one downstream settlement gate;
+- all automatic-execution fields are false;
+- private configuration and databases belong outside Git and cloud sync.
 
-## Not implemented and not claimed complete
+## Not yet production-complete
 
-The larger Pro modules listed in the implementation roadmap are not part of
-this verified baseline. Trump/Polymarket event studies, expanded
-volatility surfaces, overnight models, Barra-style factor risk, Kalman beta,
-manager-skill attribution, production social collectors and automatic
-prediction-horizon scheduling remain roadmap items. See
-`docs/IMPLEMENTATION_STATUS.md` for the complete boundary.
+- verified GPT receiver and recurring private delivery;
+- read-only IBKR Flex reconciliation;
+- one persisted live end-to-end accepted-close/report/delivery trial;
+- production White House/Trump, Polymarket and authorized-social adapters;
+- automated corporate actions;
+- expanded volatility/overnight models and multi-period attribution/allocation.
+
+See `docs/IMPLEMENTATION_STATUS.md` for the exact implemented/roadmap boundary
+and `docs/CODEX_HANDOFF_PRO_SUITE.md` for the next deployment order.

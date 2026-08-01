@@ -1,0 +1,15 @@
+schema_version: pro_daily_config/v1.0.0
+runtime:
+  data_classification: synthetic_example
+  allow_live_report: false
+  example_only: true
+
+demo_mode: true
+report_date: "2026-01-02"
+
+# Public synthetic plan. Real owner tickers and amounts belong only in a
+# .private.yaml configuration outside Git and cloud-sync folders.
+dca_plan:
+  DEMO_CORE: 20
+  DEMO_GROWTH: 20
+  DEMO_DIV: 20

@@ -1,0 +1,81 @@
+schema_version: serenity_project_contract/v1.0.0
+product:
+  name: US Stock Daily Investment Research Agent
+  owner_goal: >-
+    Produce exactly one private post-close GPT-readable daily report that keeps
+    accounting facts, modeled DCA, research signals and broker-confirmed events
+    separate.
+repository_roles:
+  US-stock-daily-report-framework:
+    visibility: public
+    role: canonical source framework
+    contains: [code, synthetic_examples, tests, methodology]
+  US-stock-daily-report:
+    visibility_required: private
+    role: owner deployment and historical operational repository
+    rule: must never be treated as safe public history
+non_negotiables:
+  - no broker order endpoint
+  - no automatic execution
+  - no private holdings or reports in Git, Actions summary, or public artifacts
+  - one user-visible daily report per date
+  - missing data remains UNKNOWN, blocked, degraded, or stale; never neutral by default
+  - social media cannot independently open, add, trim, or exit
+  - modeled DCA is never broker-confirmed execution
+  - all point-in-time models must preserve first-observed timestamps
+private_daily_plan:
+  five_tickers_required: true
+  base_amount_usd_each: 20
+  tickers_loaded_from_private_config: true
+  automatic_execution: false
+advanced_models:
+  trump_policy_transmission_index:
+    implemented_library: true
+    decision_score_cap: 0.05
+    independent_trade_trigger: false
+  polymarket_settlement_event_study:
+    implemented_library: true
+    freeze_before_resolution_hours: 24
+    lookahead_permitted: false
+  barra_public_proxy:
+    implemented_library: true
+    commercial_barra_claim: false
+  kalman_dynamic_exposure:
+    implemented_library: true
+    disclosed_holding_claim: false
+  manager_skill_and_fragility:
+    implemented_library: true
+    copy_trade_requires_fragility_gate: true
+  social_heat:
+    implemented_existing_framework: true
+    xiaohongshu_execution_weight: 0
+    combined_social_score_cap: 0.05
+operational_activation_gates:
+  - repository_visibility_correct
+  - private_config_outside_git_and_cloud_sync
+  - accepted_close_live_trial_persisted
+  - private_opening_attested_and_initialized
+  - receiver_exactly_once_or_lookup_verified
+  - exactly_one_daily_automation_target_verified
+  - one_end_to_end_live_report_delivered_and_replayed_without_duplicate
+codex_handoff_order:
+  - fix operational repository visibility and role
+  - complete one live accepted-close and private report trial
+  - implement verified GPT receiver
+  - add read-only IBKR Flex reconciliation
+  - merge legacy research outputs into the ledger-backed report
+  - schedule prediction settlements
+  - add production policy and Polymarket collectors
+  - add Windows CI and independent review
+acceptance:
+  commands:
+    - python -m compileall -q serenity_monitor/pro_research run_pro_daily.py
+    - pytest -q tests/test_pro_research_suite.py
+    - python run_pro_daily.py --config examples/pro_daily_config.example.yaml --out-dir out_pro_demo
+  expected:
+    - report_json_validates_schema
+    - report_contains_hold_or_explicit_block
+    - dca_is_non_executing
+    - policy_and_social_cannot_independently_trade
+    - polymarket_uses_only_pre_embargo_probability
+    - public_examples_are_synthetic
