@@ -229,6 +229,21 @@ TWELVE_DATA_API_KEY
 ALPHA_VANTAGE_API_KEY
 ```
 
+Audit the activation boundary before any mutating command:
+
+```bash
+python scripts/check_private_daily_readiness.py
+```
+
+This command performs no network request, creates no runtime file and prints
+one redacted JSON object. Its `operational_state` and `next_safe_action`
+separate initialization, report preparation, pending delivery, reconciliation
+and an already-complete local day. Exit code `0` is reserved for
+`workflow_activation_allowed=true`; a valid but blocked audit exits `2`.
+Prepared/retryable delivery is intentionally independent of market-data and
+ledger readiness. See `docs/PRIVATE_DAILY_ACTIVATION.md` for the fixed contract
+and the gates that still prevent recurring activation.
+
 Initialize the opening snapshot and both opening valuations explicitly once:
 
 ```bash

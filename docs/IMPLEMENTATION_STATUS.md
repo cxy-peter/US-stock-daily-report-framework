@@ -47,6 +47,9 @@ repository commit or branch is part of this provenance.
   storage gates, same-handle config reads, POSIX ownership/modes and protected
   Windows owner-only ACL verification;
 - private-runtime JSON audit artifacts and focused regression tests;
+- a non-mutating, redacted private-daily activation audit with whole-database
+  ledger/outbox verification, current receiver scoping, explicit operational
+  states and a separate recurring-workflow activation decision;
 - an offline deterministic Social Heat model with authorization/source-health
   gates, separate attention and candidate execution-score weights, provisional
   cross-platform priors, 30-day baselines, manipulation quarantine and a hard
@@ -75,6 +78,8 @@ repository commit or branch is part of this provenance.
   private daily runtime, plus a new versioned report contract for structured
   prediction and social-topic detail;
 - a verified GPT receiver adapter and recurring private delivery deployment;
+- owner-opening attestation, safe manual-event ingestion and persisted live
+  end-to-end activation evidence for the private daily readiness contract;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;
 - VIX1D/VIX9D/VVIX/SKEW and options-chain ingestion;

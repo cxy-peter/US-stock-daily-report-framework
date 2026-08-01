@@ -310,6 +310,55 @@ def resolve_private_runtime_paths(
     )
 
 
+def validate_existing_private_storage_root(paths: PrivateRuntimePaths) -> Path:
+    """Validate an existing runtime root without creating or tightening it."""
+
+    if not isinstance(paths, PrivateRuntimePaths):
+        _fail("private_runtime_paths_invalid")
+    root = _validate_external_private_path(paths.root)
+    if root != paths.root.absolute() or not root.is_dir():
+        _fail("private_storage_root_missing")
+    metadata = root.stat()
+    if os.name == "nt":
+        try:
+            verify_owner_only_dacl(root, require_protected=True)
+        except PrivateWindowsSecurityError as exc:
+            raise PrivateRuntimePathError("private_storage_root_acl_invalid") from exc
+    elif metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
+        _fail("private_storage_root_permissions_invalid")
+    return root
+
+
+def validate_existing_private_runtime_file(
+    paths: PrivateRuntimePaths,
+    path: str | Path,
+) -> Path:
+    """Validate one known runtime database for a strictly read-only audit."""
+
+    root = validate_existing_private_storage_root(paths)
+    candidate = Path(path).expanduser().absolute()
+    allowed = {
+        paths.ledger_database.absolute(),
+        paths.outbox_database.absolute(),
+    }
+    if candidate not in allowed or candidate.parent != root:
+        _fail("private_runtime_file_identity_mismatch")
+    validated = _validate_external_private_path(candidate)
+    if not validated.is_file():
+        _fail("private_runtime_file_missing")
+    metadata = validated.stat()
+    if metadata.st_nlink != 1:
+        _fail("private_runtime_file_hardlink_forbidden")
+    if os.name == "nt":
+        try:
+            verify_owner_only_dacl(validated, require_protected=True)
+        except PrivateWindowsSecurityError as exc:
+            raise PrivateRuntimePathError("private_runtime_file_acl_invalid") from exc
+    elif metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
+        _fail("private_runtime_file_permissions_invalid")
+    return validated
+
+
 def require_delivery_target(
     config: PrivateDailyRuntimeConfig,
     environ: Mapping[str, str],
@@ -405,6 +454,8 @@ __all__ = [
     "require_delivery_target",
     "resolve_private_runtime_paths",
     "tighten_private_file",
+    "validate_existing_private_runtime_file",
+    "validate_existing_private_storage_root",
     "validate_private_report_directory",
     "validate_live_private_config_path",
 ]
