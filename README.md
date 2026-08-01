@@ -2,7 +2,8 @@
 
 An auditable U.S. investment-research framework with deterministic market
 analysis, primary-source collection, KOL credibility gates, portfolio-capacity
-checks, recurring-investment review and Markdown/CSV/JSON output.
+checks, recurring-investment review, accepted-close validation and
+Markdown/CSV/JSON output.
 
 The public repository contains framework code and synthetic examples only. It
 does not contain the repository owner's account value, holdings, share counts,
@@ -71,6 +72,22 @@ At least two healthy and two confirming groups are required. The overlay is
 downside-only and may reduce the risk budget by at most 30%. Mock, stale and
 future-dated inputs are excluded before scoring. HXC/USD-CNH and the explicitly
 labelled KWEB fallback are China/ADR context only.
+
+## Accepted-close boundary
+
+Research/display quotes and settlement-grade closes are separate data paths.
+`serenity_monitor/provider_registry.py` can collect raw daily observations from
+Twelve Data and Alpha Vantage, validate exact session/security/currency/price
+semantics, and require two independent sources before it emits an
+`AcceptedClose`. It selects the validated primary value and never averages a
+conflict.
+
+Agreement at or below 30 bps passes the price gate. A 30--75 bps warning is
+blocked from settlement by default, and a difference above 75 bps is blocked.
+Single-source, adjusted, mock, snapshot, stale or wrong-session observations
+remain display-only. This registry does not mutate holdings: exchange-calendar
+completion, corporate actions and the private atomic ledger remain downstream
+gates. See [Provider Registry](docs/PROVIDER_REGISTRY.md).
 
 ## Social research boundary
 
@@ -155,9 +172,10 @@ synthetic offline smoke report in the runner's temporary directory. It has:
 - no artifact upload/download;
 - no report commit or write permission.
 
-A future private daily delivery runtime must be deployed separately after
-accepted-close validation, a manual private ledger and delivery controls are
-implemented and verified.
+A future private daily delivery runtime must be deployed separately after the
+manual private ledger, corporate-action/calendar gates and delivery controls
+are implemented and verified. The accepted-close price gate is implemented,
+but it is not yet wired to daily accounting in this release.
 
 ## Main files
 
@@ -165,6 +183,7 @@ implemented and verified.
 config/portfolio.example.yaml           fictional public configuration
 scripts/check_public_privacy.py          tracked-tree privacy gate
 serenity_monitor/data.py                 market-data providers
+serenity_monitor/provider_registry.py    accepted-close price validation
 serenity_monitor/external_views.py       source collection and health
 serenity_monitor/credibility.py          source/claim/copy-trade scoring
 serenity_monitor/evidence.py             evidence and independence gates

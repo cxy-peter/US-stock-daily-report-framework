@@ -22,11 +22,17 @@ repository commit or branch is part of this provenance.
 - objective volatility, credit and breadth confirmation groups;
 - HXC and USD/CNH context for China/ADR themes;
 - downside-only risk-budget integration with mock-data isolation;
+- a separate accepted-close provider registry for raw Twelve Data and Alpha
+  Vantage daily observations, with exact-session identity gates, independent
+  source consensus, deterministic audit IDs and atomic batch price gating;
 - private-runtime JSON audit artifacts and focused regression tests;
 - this status record, so later work can distinguish code from proposals.
 
 ## Still roadmap, not current implementation
 
+- exchange-calendar completion and corporate-action reconciliation;
+- the private manual-event/DCA accounting ledger and return calculation;
+- the stable private GPT daily-report contract and recurring delivery runtime;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;
 - VIX1D/VIX9D/VVIX/SKEW and options-chain ingestion;
@@ -40,3 +46,7 @@ repository commit or branch is part of this provenance.
 Each roadmap item should be implemented as a separate auditable module with
 point-in-time fixtures and focused tests. It must not be marked complete from a
 document description alone.
+
+The accepted-close registry is currently an isolated price-validation contract.
+It does not change `run_report.py`, portfolio state, DCA review output or any
+private ledger, and it does not connect to a broker.
