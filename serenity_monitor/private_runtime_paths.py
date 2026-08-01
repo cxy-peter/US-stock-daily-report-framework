@@ -112,6 +112,24 @@ class PrivateRuntimePaths:
 
         return self.manual_event_directory / "receipts"
 
+    @property
+    def research_snapshot_file(self) -> Path:
+        """Latest sanitized aggregate research snapshot for the daily runtime."""
+
+        return self.root / "research-snapshot.latest.json"
+
+    @property
+    def research_snapshot_request_file(self) -> Path:
+        """Fixed owner-only sanitized projection request for explicit publishing."""
+
+        return self.root / "research-snapshot.request.json"
+
+    @property
+    def research_snapshot_lock_file(self) -> Path:
+        """Cross-process lock for monotonic research snapshot replacement."""
+
+        return self.root / "research-snapshot.lock"
+
 
 def _normalized_component(value: str) -> str:
     return "".join(character for character in value.casefold() if character.isalnum())

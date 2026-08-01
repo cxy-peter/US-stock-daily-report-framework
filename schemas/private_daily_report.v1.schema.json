@@ -29,7 +29,7 @@
       "const": "https://json-schema.org/draft/2020-12/schema"
     },
     "schema_version": {
-      "const": "private_daily_report/v1.0.0"
+      "enum": ["private_daily_report/v1.0.0", "private_daily_report/v1.1.0"]
     },
     "report_id": {
       "$ref": "#/$defs/sha256"
@@ -86,6 +86,21 @@
       "$ref": "#/$defs/privacy"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {"const": "private_daily_report/v1.0.0"}
+        },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "properties": {
+          "research": {"$ref": "#/$defs/research_v1_0"}
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": {
       "type": "string",
@@ -175,6 +190,13 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 512
+      },
+      "uniqueItems": true
+    },
+    "sha256_list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sha256"
       },
       "uniqueItems": true
     },
@@ -728,11 +750,41 @@
         "status": {
           "enum": ["PASS", "WATCH", "REJECT", "NEED_INFO", "NOT_DUE"]
         },
+        "product_quality_status": {
+          "enum": ["PASS", "WATCH", "REJECT", "NEED_INFO", "NOT_DUE"]
+        },
+        "portfolio_fit_status": {
+          "enum": ["PASS", "WATCH", "REJECT", "NEED_INFO", "NOT_DUE"]
+        },
+        "observed_at": {
+          "$ref": "#/$defs/date_time"
+        },
         "summary": {
           "type": "string",
           "maxLength": 4096
         },
         "reason_codes": {
+          "$ref": "#/$defs/string_list"
+        },
+        "triggered_cadences": {
+          "$ref": "#/$defs/string_list"
+        },
+        "triggered_event_keys": {
+          "$ref": "#/$defs/sha256_list"
+        },
+        "next_due": {
+          "$ref": "#/$defs/date_time"
+        },
+        "coverage_ratio": {
+          "$ref": "#/$defs/nullable_nonnegative_decimal"
+        },
+        "missing_categories": {
+          "$ref": "#/$defs/string_list"
+        },
+        "stale_categories": {
+          "$ref": "#/$defs/string_list"
+        },
+        "degraded_categories": {
           "$ref": "#/$defs/string_list"
         }
       }
@@ -759,6 +811,18 @@
         "score": {
           "$ref": "#/$defs/nullable_nonnegative_decimal"
         },
+        "attention_weight": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "candidate_execution_weight": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
+        "calibration_state": {
+          "enum": ["active", "decayed", "quarantined", "research_only"]
+        },
+        "effective_execution_weight": {
+          "$ref": "#/$defs/nonnegative_decimal"
+        },
         "research_only": {
           "type": "boolean"
         },
@@ -766,6 +830,58 @@
           "type": "string",
           "maxLength": 4096
         }
+      }
+    },
+    "social_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_contribution",
+        "effective_contribution",
+        "effective_execution_coverage",
+        "decision_weight_cap",
+        "calibration_state",
+        "research_only"
+      ],
+      "properties": {
+        "raw_contribution": {"$ref": "#/$defs/decimal"},
+        "effective_contribution": {"$ref": "#/$defs/decimal"},
+        "effective_execution_coverage": {"$ref": "#/$defs/nonnegative_decimal"},
+        "decision_weight_cap": {"$ref": "#/$defs/nonnegative_decimal"},
+        "calibration_state": {
+          "enum": ["active", "decayed", "quarantined", "research_only"]
+        },
+        "research_only": {"const": true}
+      }
+    },
+    "signal_calibration_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "topic",
+        "model_version",
+        "market_regime",
+        "horizon",
+        "state",
+        "sample_count",
+        "recent_sample_count",
+        "reasons",
+        "automatic_trading_permitted"
+      ],
+      "properties": {
+        "platform": {"enum": ["xiaohongshu", "x", "reddit", "other"]},
+        "topic": {"$ref": "#/$defs/safe_id"},
+        "model_version": {"$ref": "#/$defs/safe_id"},
+        "market_regime": {"$ref": "#/$defs/safe_id"},
+        "horizon": {"enum": [1, 5, 20, 60]},
+        "state": {
+          "enum": ["active", "decayed", "quarantined", "research_only"]
+        },
+        "sample_count": {"type": "integer", "minimum": 0},
+        "recent_sample_count": {"type": "integer", "minimum": 0},
+        "reasons": {"$ref": "#/$defs/string_list"},
+        "automatic_trading_permitted": {"const": false}
       }
     },
     "research": {
@@ -802,10 +918,76 @@
             "$ref": "#/$defs/social_attention_item"
           }
         },
+        "social_decision": {
+          "$ref": "#/$defs/social_decision"
+        },
+        "signal_calibration": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/signal_calibration_item"}
+        },
         "notes": {
           "$ref": "#/$defs/string_list"
         }
       }
+    },
+    "fund_monitoring_item_v1_0": {
+      "allOf": [
+        {"$ref": "#/$defs/fund_monitoring_item"},
+        {
+          "not": {
+            "anyOf": [
+              {"required": ["product_quality_status"]},
+              {"required": ["portfolio_fit_status"]},
+              {"required": ["observed_at"]},
+              {"required": ["triggered_cadences"]},
+              {"required": ["triggered_event_keys"]},
+              {"required": ["next_due"]},
+              {"required": ["coverage_ratio"]},
+              {"required": ["missing_categories"]},
+              {"required": ["stale_categories"]},
+              {"required": ["degraded_categories"]}
+            ]
+          }
+        }
+      ]
+    },
+    "social_attention_item_v1_0": {
+      "allOf": [
+        {"$ref": "#/$defs/social_attention_item"},
+        {
+          "not": {
+            "anyOf": [
+              {"required": ["attention_weight"]},
+              {"required": ["candidate_execution_weight"]},
+              {"required": ["calibration_state"]},
+              {"required": ["effective_execution_weight"]}
+            ]
+          }
+        }
+      ]
+    },
+    "research_v1_0": {
+      "allOf": [
+        {"$ref": "#/$defs/research"},
+        {
+          "not": {
+            "anyOf": [
+              {"required": ["social_decision"]},
+              {"required": ["signal_calibration"]}
+            ]
+          },
+          "properties": {
+            "fund_monitoring": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/fund_monitoring_item_v1_0"}
+            },
+            "social_attention": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/social_attention_item_v1_0"}
+            }
+          }
+        }
+      ]
     },
     "source_health_item": {
       "type": "object",

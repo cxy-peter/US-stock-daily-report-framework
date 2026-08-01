@@ -23,7 +23,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from jsonschema import Draft202012Validator, FormatChecker
 
 
-SCHEMA_VERSION = "private_daily_report/v1.0.0"
+LEGACY_SCHEMA_VERSION = "private_daily_report/v1.0.0"
+SCHEMA_VERSION = "private_daily_report/v1.1.0"
+SUPPORTED_SCHEMA_VERSIONS = frozenset({LEGACY_SCHEMA_VERSION, SCHEMA_VERSION})
 JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent
@@ -157,7 +159,7 @@ def compute_delivery_id(
     private outbox and is deliberately absent from the report schema.
     """
 
-    if schema_version != SCHEMA_VERSION:
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         raise PrivateDailyReportIdentityError("unsupported schema_version")
     date_text = delivery_date.isoformat() if isinstance(delivery_date, dt.date) else str(delivery_date)
     try:
@@ -768,6 +770,319 @@ def _validate_book(
                     )
 
 
+def _expected_fund_status(product_status: str, fit_status: str) -> str:
+    statuses = {product_status, fit_status}
+    if "REJECT" in statuses:
+        return "REJECT"
+    if "NEED_INFO" in statuses:
+        return "NEED_INFO"
+    if "WATCH" in statuses:
+        return "WATCH"
+    if statuses == {"PASS"}:
+        return "PASS"
+    return "NOT_DUE"
+
+
+def validate_private_daily_research_section(
+    research: Mapping[str, Any],
+    *,
+    schema_version: str,
+    prepared_at: dt.datetime,
+) -> None:
+    """Validate research-only cross-field semantics before state mutation."""
+
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise PrivateDailyReportSemanticError("unsupported research schema_version")
+    if (
+        not isinstance(prepared_at, dt.datetime)
+        or prepared_at.tzinfo is None
+        or prepared_at.utcoffset() is None
+    ):
+        raise PrivateDailyReportSemanticError(
+            "research prepared_at must be timezone-aware"
+        )
+    prepared = prepared_at.astimezone(dt.timezone.utc)
+    _require_sorted_unique(
+        research["fund_monitoring"],
+        "fund_key",
+        "research.fund_monitoring",
+    )
+    social_keys = [
+        (item["platform"], item["topic"])
+        for item in research["social_attention"]
+    ]
+    if social_keys != sorted(social_keys):
+        raise PrivateDailyReportSemanticError(
+            "research.social_attention must be sorted by platform and topic"
+        )
+    if len(social_keys) != len(set(social_keys)):
+        raise PrivateDailyReportSemanticError(
+            "research.social_attention contains duplicate platform/topic entries"
+        )
+
+    extended_fund_fields = {
+        "product_quality_status",
+        "portfolio_fit_status",
+        "observed_at",
+        "triggered_cadences",
+        "triggered_event_keys",
+        "next_due",
+        "coverage_ratio",
+        "missing_categories",
+        "stale_categories",
+        "degraded_categories",
+    }
+    for item in research["fund_monitoring"]:
+        _require_sorted_unique_scalars(
+            item["reason_codes"],
+            f"fund {item['fund_key']} reason_codes",
+        )
+        present = extended_fund_fields.intersection(item)
+        if present and present != extended_fund_fields:
+            raise PrivateDailyReportSemanticError(
+                "extended fund monitoring fields must be all present or all absent"
+            )
+        if not present:
+            continue
+        for field_name in (
+            "triggered_cadences",
+            "triggered_event_keys",
+            "missing_categories",
+            "stale_categories",
+            "degraded_categories",
+        ):
+            _require_sorted_unique_scalars(
+                item[field_name],
+                f"fund {item['fund_key']} {field_name}",
+            )
+        observed_at = _utc_z_date_time(
+            item["observed_at"],
+            f"fund {item['fund_key']} observed_at",
+        )
+        next_due = _utc_z_date_time(
+            item["next_due"],
+            f"fund {item['fund_key']} next_due",
+        )
+        if observed_at > prepared:
+            raise PrivateDailyReportSemanticError(
+                f"fund {item['fund_key']} observed_at may not exceed prepared_at"
+            )
+        if next_due < observed_at:
+            raise PrivateDailyReportSemanticError(
+                f"fund {item['fund_key']} next_due may not precede observed_at"
+            )
+        expected_status = _expected_fund_status(
+            item["product_quality_status"],
+            item["portfolio_fit_status"],
+        )
+        if item["status"] != expected_status:
+            raise PrivateDailyReportSemanticError(
+                f"fund {item['fund_key']} status does not match dimension statuses"
+            )
+        ratio = item["coverage_ratio"]
+        if ratio is not None and not (Decimal("0") <= Decimal(ratio) <= Decimal("1")):
+            raise PrivateDailyReportSemanticError(
+                f"fund {item['fund_key']} coverage_ratio must be between zero and one"
+            )
+        if item["status"] == "PASS" and (
+            ratio != "1"
+            or item["missing_categories"]
+            or item["stale_categories"]
+            or item["degraded_categories"]
+        ):
+            raise PrivateDailyReportSemanticError(
+                f"fund {item['fund_key']} PASS requires complete healthy coverage"
+            )
+
+    extended_social_fields = {
+        "attention_weight",
+        "candidate_execution_weight",
+        "calibration_state",
+        "effective_execution_weight",
+    }
+    attention_weight_sum = Decimal("0")
+    candidate_weight_sum = Decimal("0")
+    effective_weight_sum = Decimal("0")
+    platform_rows: dict[str, dict[str, Any]] = {}
+    for item in research["social_attention"]:
+        present = extended_social_fields.intersection(item)
+        if present and present != extended_social_fields:
+            raise PrivateDailyReportSemanticError(
+                "extended social attention fields must be all present or all absent"
+            )
+        if not present:
+            continue
+        if item["platform"] in platform_rows:
+            raise PrivateDailyReportSemanticError(
+                "extended social attention permits one aggregate row per platform"
+            )
+        platform_rows[item["platform"]] = item
+        attention_weight = Decimal(item["attention_weight"])
+        candidate_weight = Decimal(item["candidate_execution_weight"])
+        effective_weight = Decimal(item["effective_execution_weight"])
+        if any(
+            value < Decimal("0") or value > Decimal("1")
+            for value in (attention_weight, candidate_weight, effective_weight)
+        ):
+            raise PrivateDailyReportSemanticError(
+                "social attention weights must be between zero and one"
+            )
+        if effective_weight > candidate_weight:
+            raise PrivateDailyReportSemanticError(
+                "effective social execution weight may not exceed candidate weight"
+            )
+        if item["platform"] == "xiaohongshu" and (
+            candidate_weight != Decimal("0") or effective_weight != Decimal("0")
+        ):
+            raise PrivateDailyReportSemanticError(
+                "xiaohongshu execution weights must remain zero"
+            )
+        if item["status"] in {"blocked", "quarantined", "not_configured"} and (
+            candidate_weight != Decimal("0") or effective_weight != Decimal("0")
+        ):
+            raise PrivateDailyReportSemanticError(
+                "unhealthy social rows must not retain execution weights"
+            )
+        attention_weight_sum += attention_weight
+        candidate_weight_sum += candidate_weight
+        effective_weight_sum += effective_weight
+    tolerance = Decimal("0.000000000001")
+    if attention_weight_sum > Decimal("1") + tolerance:
+        raise PrivateDailyReportSemanticError(
+            "social attention weights may not exceed one"
+        )
+    if candidate_weight_sum > Decimal("1") + tolerance:
+        raise PrivateDailyReportSemanticError(
+            "candidate social execution weights may not exceed one"
+        )
+    if effective_weight_sum > Decimal("1") + tolerance:
+        raise PrivateDailyReportSemanticError(
+            "effective social execution weights may not exceed one"
+        )
+
+    calibration_rows = research.get("signal_calibration", [])
+    calibration_keys = [
+        (
+            item["platform"],
+            item["topic"],
+            item["model_version"],
+            item["market_regime"],
+            item["horizon"],
+        )
+        for item in calibration_rows
+    ]
+    if calibration_keys != sorted(calibration_keys):
+        raise PrivateDailyReportSemanticError(
+            "research.signal_calibration must be sorted by scope"
+        )
+    if len(calibration_keys) != len(set(calibration_keys)):
+        raise PrivateDailyReportSemanticError(
+            "research.signal_calibration contains duplicate scopes"
+        )
+    state_precedence = {
+        "active": 0,
+        "decayed": 1,
+        "research_only": 2,
+        "quarantined": 3,
+    }
+    state_multiplier = {
+        "active": Decimal("1"),
+        "decayed": Decimal("0.25"),
+        "research_only": Decimal("0"),
+        "quarantined": Decimal("0"),
+    }
+    calibration_by_platform: dict[str, list[dict[str, Any]]] = {}
+    for item in calibration_rows:
+        _require_sorted_unique_scalars(
+            item["reasons"],
+            "signal calibration reasons",
+        )
+        if item["recent_sample_count"] > item["sample_count"]:
+            raise PrivateDailyReportSemanticError(
+                "signal calibration recent samples may not exceed total samples"
+            )
+        if item["state"] != "research_only" and (
+            item["sample_count"] == 0 or item["recent_sample_count"] == 0
+        ):
+            raise PrivateDailyReportSemanticError(
+                "active signal calibration requires settled samples"
+            )
+        calibration_by_platform.setdefault(item["platform"], []).append(item)
+
+    applicable_states: list[str] = []
+    for platform, row in platform_rows.items():
+        states = calibration_by_platform.get(platform, [])
+        expected_state = (
+            max(
+                (item["state"] for item in states),
+                key=lambda state: state_precedence[state],
+            )
+            if states
+            else "research_only"
+        )
+        expected_multiplier = (
+            min(state_multiplier[item["state"]] for item in states)
+            if states
+            else Decimal("0")
+        )
+        if platform == "xiaohongshu":
+            expected_multiplier = Decimal("0")
+        candidate_weight = Decimal(row["candidate_execution_weight"])
+        if row["calibration_state"] != expected_state:
+            raise PrivateDailyReportSemanticError(
+                "social calibration state does not match persisted weight states"
+            )
+        if Decimal(row["effective_execution_weight"]) != (
+            candidate_weight * expected_multiplier
+        ):
+            raise PrivateDailyReportSemanticError(
+                "effective social weight does not match calibration multiplier"
+            )
+        if candidate_weight > Decimal("0"):
+            applicable_states.append(expected_state)
+
+    social_decision = research.get("social_decision")
+    if social_decision is not None:
+        cap = Decimal(social_decision["decision_weight_cap"])
+        raw = Decimal(social_decision["raw_contribution"])
+        effective = Decimal(social_decision["effective_contribution"])
+        coverage = Decimal(social_decision["effective_execution_coverage"])
+        if cap > Decimal("0.05") or abs(raw) > cap or abs(effective) > cap:
+            raise PrivateDailyReportSemanticError(
+                "social decision contribution exceeds the five-percent cap"
+            )
+        if coverage > Decimal("1"):
+            raise PrivateDailyReportSemanticError(
+                "social decision execution coverage may not exceed one"
+            )
+        if abs(coverage - effective_weight_sum) > tolerance:
+            raise PrivateDailyReportSemanticError(
+                "social decision coverage must reconcile to effective platform weights"
+            )
+        expected_aggregate_state = (
+            max(applicable_states, key=lambda state: state_precedence[state])
+            if applicable_states
+            else "research_only"
+        )
+        if social_decision["calibration_state"] != expected_aggregate_state:
+            raise PrivateDailyReportSemanticError(
+                "social decision calibration state does not reconcile"
+            )
+        if coverage == Decimal("0") and effective != Decimal("0"):
+            raise PrivateDailyReportSemanticError(
+                "social decision without calibrated coverage must be zero"
+            )
+        if not calibration_rows and (
+            effective != Decimal("0")
+            or coverage != Decimal("0")
+            or social_decision["calibration_state"] != "research_only"
+        ):
+            raise PrivateDailyReportSemanticError(
+                "uncalibrated social candidate score must remain disabled"
+            )
+    _require_sorted_unique_scalars(research["notes"], "research.notes")
+
+
 def _validate_semantics(report: dict[str, Any]) -> None:
     _require_no_delivery_target(report)
 
@@ -935,6 +1250,11 @@ def _validate_semantics(report: dict[str, Any]) -> None:
                 )
 
     research = report["research"]
+    validate_private_daily_research_section(
+        research,
+        schema_version=report["schema_version"],
+        prepared_at=prepared_at,
+    )
     _require_sorted_unique(research["fund_monitoring"], "fund_key", "research.fund_monitoring")
     social_keys = [
         (item["platform"], item["topic"])
@@ -953,6 +1273,126 @@ def _validate_semantics(report: dict[str, Any]) -> None:
             item["reason_codes"],
             f"fund {item['fund_key']} reason_codes",
         )
+        extended_fund_fields = {
+            "product_quality_status",
+            "portfolio_fit_status",
+            "triggered_cadences",
+            "triggered_event_keys",
+            "next_due",
+            "coverage_ratio",
+            "missing_categories",
+            "stale_categories",
+            "degraded_categories",
+        }
+        present = extended_fund_fields.intersection(item)
+        if present and present != extended_fund_fields:
+            raise PrivateDailyReportSemanticError(
+                "extended fund monitoring fields must be all present or all absent"
+            )
+        if present:
+            for field_name in (
+                "triggered_cadences",
+                "triggered_event_keys",
+                "missing_categories",
+                "stale_categories",
+                "degraded_categories",
+            ):
+                _require_sorted_unique_scalars(
+                    item[field_name],
+                    f"fund {item['fund_key']} {field_name}",
+                )
+
+    extended_social_fields = {
+        "attention_weight",
+        "candidate_execution_weight",
+        "calibration_state",
+        "effective_execution_weight",
+    }
+    effective_weight_sum = Decimal("0")
+    for item in research["social_attention"]:
+        present = extended_social_fields.intersection(item)
+        if present and present != extended_social_fields:
+            raise PrivateDailyReportSemanticError(
+                "extended social attention fields must be all present or all absent"
+            )
+        if not present:
+            continue
+        attention_weight = Decimal(item["attention_weight"])
+        candidate_weight = Decimal(item["candidate_execution_weight"])
+        effective_weight = Decimal(item["effective_execution_weight"])
+        if any(
+            value < Decimal("0") or value > Decimal("1")
+            for value in (attention_weight, candidate_weight, effective_weight)
+        ):
+            raise PrivateDailyReportSemanticError(
+                "social attention weights must be between zero and one"
+            )
+        if effective_weight > candidate_weight:
+            raise PrivateDailyReportSemanticError(
+                "effective social execution weight may not exceed candidate weight"
+            )
+        if item["platform"] == "xiaohongshu" and (
+            candidate_weight != Decimal("0") or effective_weight != Decimal("0")
+        ):
+            raise PrivateDailyReportSemanticError(
+                "xiaohongshu execution weights must remain zero"
+            )
+        effective_weight_sum += effective_weight
+    if effective_weight_sum > Decimal("1"):
+        raise PrivateDailyReportSemanticError(
+            "effective social execution weights may not exceed one"
+        )
+
+    calibration_rows = research.get("signal_calibration", [])
+    calibration_keys = [
+        (
+            item["platform"],
+            item["topic"],
+            item["model_version"],
+            item["market_regime"],
+            item["horizon"],
+        )
+        for item in calibration_rows
+    ]
+    if calibration_keys != sorted(calibration_keys):
+        raise PrivateDailyReportSemanticError(
+            "research.signal_calibration must be sorted by scope"
+        )
+    if len(calibration_keys) != len(set(calibration_keys)):
+        raise PrivateDailyReportSemanticError(
+            "research.signal_calibration contains duplicate scopes"
+        )
+    for item in calibration_rows:
+        _require_sorted_unique_scalars(
+            item["reasons"],
+            "signal calibration reasons",
+        )
+        if item["recent_sample_count"] > item["sample_count"]:
+            raise PrivateDailyReportSemanticError(
+                "signal calibration recent samples may not exceed total samples"
+            )
+    social_decision = research.get("social_decision")
+    if social_decision is not None:
+        cap = Decimal(social_decision["decision_weight_cap"])
+        raw = Decimal(social_decision["raw_contribution"])
+        effective = Decimal(social_decision["effective_contribution"])
+        coverage = Decimal(social_decision["effective_execution_coverage"])
+        if cap > Decimal("0.05") or abs(raw) > cap or abs(effective) > cap:
+            raise PrivateDailyReportSemanticError(
+                "social decision contribution exceeds the five-percent cap"
+            )
+        if coverage > Decimal("1"):
+            raise PrivateDailyReportSemanticError(
+                "social decision execution coverage may not exceed one"
+            )
+        if not calibration_rows and (
+            effective != Decimal("0")
+            or coverage != Decimal("0")
+            or social_decision["calibration_state"] != "research_only"
+        ):
+            raise PrivateDailyReportSemanticError(
+                "uncalibrated social candidate score must remain disabled"
+            )
     _require_sorted_unique_scalars(research["notes"], "research.notes")
 
     _require_sorted_unique(report["actions"], "action_id", "actions")
@@ -1063,8 +1503,10 @@ validate_report = validate_private_daily_report
 
 __all__ = [
     "JSON_SCHEMA_URI",
+    "LEGACY_SCHEMA_VERSION",
     "SCHEMA_PATH",
     "SCHEMA_VERSION",
+    "SUPPORTED_SCHEMA_VERSIONS",
     "PrivateDailyReportCanonicalizationError",
     "PrivateDailyReportError",
     "PrivateDailyReportIdentityError",
@@ -1078,6 +1520,7 @@ __all__ = [
     "compute_target_key_sha256",
     "finalize_private_daily_report",
     "finalize_report",
+    "validate_private_daily_research_section",
     "validate_private_daily_report",
     "validate_report",
 ]

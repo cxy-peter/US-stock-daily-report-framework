@@ -17,6 +17,7 @@ from serenity_monitor.private_runtime_config import PrivateRuntimeConfigError
 from serenity_monitor.private_runtime_paths import PrivateRuntimePathError
 from scripts import attest_private_opening as attestation_script
 from scripts import attest_private_event as manual_event_script
+from scripts import publish_private_research as research_script
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,78 @@ def test_missing_configuration_environment_is_fixed_and_silent() -> None:
     assert code == private_runtime_cli.EXIT_CONFIG_OR_PRIVACY
     assert stdout == ""
     assert stderr == "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"
+
+
+def test_research_snapshot_publisher_uses_fixed_request_and_fixed_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = object()
+    paths = SimpleNamespace(root=tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "_load_live_config",
+        lambda _environment: config,
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "resolve_private_runtime_paths",
+        lambda _config, _environment: paths,
+    )
+    monkeypatch.setattr(private_runtime_cli, "ensure_private_storage", lambda _p: None)
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "publish_private_research_snapshot_request",
+        lambda value, **kwargs: captured.update(paths=value, kwargs=kwargs),
+    )
+
+    code, stdout, stderr = _capture(
+        lambda: private_runtime_cli.publish_private_research_main(
+            environ={private_runtime_cli.PRIVATE_CONFIG_ENV: "private-sentinel"}
+        )
+    )
+
+    assert code == private_runtime_cli.EXIT_OK
+    assert stdout == ""
+    assert stderr == "PRIVATE_RESEARCH_SNAPSHOT:PUBLISHED\n"
+    assert captured["paths"] is paths
+    assert "prepared_at" in captured["kwargs"]
+
+
+def test_research_snapshot_commit_unknown_maps_to_persistence_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = SimpleNamespace(root=tmp_path)
+    monkeypatch.setattr(private_runtime_cli, "_load_live_config", lambda _env: object())
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "resolve_private_runtime_paths",
+        lambda _config, _environment: paths,
+    )
+    monkeypatch.setattr(private_runtime_cli, "ensure_private_storage", lambda _p: None)
+
+    def fail_publish(*_args, **_kwargs):
+        raise private_runtime_cli.PrivateResearchStoreCommitUnknown(
+            "research_snapshot_commit_state_unknown"
+        )
+
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "publish_private_research_snapshot_request",
+        fail_publish,
+    )
+
+    code, stdout, stderr = _capture(
+        lambda: private_runtime_cli.publish_private_research_main(
+            environ={private_runtime_cli.PRIVATE_CONFIG_ENV: "private-sentinel"}
+        )
+    )
+
+    assert code == private_runtime_cli.EXIT_PERSISTENCE
+    assert stdout == ""
+    assert stderr == "PRIVATE_RESEARCH_SNAPSHOT:PERSISTENCE_FAILED\n"
 
 
 @pytest.mark.parametrize(
@@ -488,12 +561,104 @@ def test_daily_schema_only_ledger_never_constructs_outbox(
     assert outbox_calls == 0
 
 
+def test_daily_entrypoint_loads_owner_only_research_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(ledger_policy=object())
+    ledger_path = tmp_path / "portfolio-ledger.sqlite3"
+    ledger_path.touch()
+    paths = SimpleNamespace(
+        ledger_database=ledger_path,
+        outbox_database=tmp_path / "daily-outbox.sqlite3",
+        report_directory=tmp_path / "reports",
+        lock_file=tmp_path / "private.lock",
+        research_snapshot_file=tmp_path / "research-snapshot.latest.json",
+    )
+    checkpoint = SimpleNamespace(
+        opening_event_id="1" * 64,
+        opening_event_hash="2" * 64,
+        idempotency_key="opening-key",
+        created_at=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+    )
+    projection = object()
+    captured: dict[str, object] = {}
+
+    class Ledger:
+        def opening_checkpoint(self):
+            return checkpoint
+
+        def latest_common_valuation(self):
+            return object()
+
+    class Runtime:
+        def __init__(self, *args, **kwargs):
+            captured["runtime_kwargs"] = kwargs
+
+        def prepare(self, target_key, **kwargs):
+            captured["target_key"] = target_key
+            captured["prepare_kwargs"] = kwargs
+            return SimpleNamespace(status="prepared")
+
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "_load_live_config_bundle",
+        lambda _environment: (config, "f" * 64),
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "resolve_private_runtime_paths",
+        lambda _config, _environment: paths,
+    )
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "require_delivery_target",
+        lambda _config, _environment: "target",
+    )
+    monkeypatch.setattr(private_runtime_cli, "ensure_private_storage", lambda _paths: None)
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "private_runtime_lock",
+        lambda _path: nullcontext(),
+    )
+    monkeypatch.setattr(private_runtime_cli, "ExchangeSessionResolver", object)
+    monkeypatch.setattr(private_runtime_cli, "PortfolioLedger", lambda *_a, **_k: Ledger())
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "audit_opening_owner_attestation",
+        lambda *_a, **_k: SimpleNamespace(state="consumed_verified"),
+    )
+    monkeypatch.setattr(private_runtime_cli, "DailyReportOutbox", lambda *_a: object())
+    monkeypatch.setattr(private_runtime_cli, "PrivateDailyRuntime", Runtime)
+    monkeypatch.setattr(private_runtime_cli, "_registry", lambda *_a: object())
+    monkeypatch.setattr(private_runtime_cli, "missing_provider_environment", lambda _e: ())
+    monkeypatch.setattr(
+        private_runtime_cli,
+        "load_private_research_snapshot",
+        lambda *_a, **_k: SimpleNamespace(projection=projection),
+    )
+    monkeypatch.setattr(private_runtime_cli, "_tighten_runtime_files", lambda _p: None)
+
+    code, stdout, stderr = _capture(
+        lambda: private_runtime_cli.run_private_daily_main(
+            environ={private_runtime_cli.PRIVATE_CONFIG_ENV: "private-sentinel"}
+        )
+    )
+
+    assert code == private_runtime_cli.EXIT_OK
+    assert stdout == ""
+    assert stderr == ""
+    assert captured["target_key"] == "target"
+    assert captured["prepare_kwargs"]["research_projection"] is projection
+
+
 @pytest.mark.parametrize(
     ("script_name", "expected_line"),
     [
         ("attest_private_opening.py", "PRIVATE_OPENING_ATTESTATION:CONFIG_OR_PRIVACY_REJECTED\n"),
         ("attest_private_event.py", "PRIVATE_MANUAL_EVENT:CONFIG_OR_PRIVACY_REJECTED\n"),
         ("initialize_private_daily.py", "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"),
+        ("publish_private_research.py", "PRIVATE_RESEARCH_SNAPSHOT:CONFIG_OR_PRIVACY_REJECTED\n"),
         ("run_private_daily.py", "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"),
     ],
 )
@@ -563,6 +728,28 @@ def test_manual_event_script_rejects_arguments_before_import(
     assert stderr == "PRIVATE_MANUAL_EVENT:CONFIG_OR_PRIVACY_REJECTED\n"
     assert imported is False
     assert "private-payload" not in stderr
+
+
+def test_research_snapshot_script_rejects_arguments_before_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imported = False
+
+    def load_main():
+        nonlocal imported
+        imported = True
+        return None, 70, "PRIVATE_RESEARCH_SNAPSHOT:INTERNAL_FAILURE"
+
+    monkeypatch.setattr(research_script, "_load_main", load_main)
+    monkeypatch.setattr(sys, "argv", ["publish_private_research.py", "private-value"])
+
+    code, stdout, stderr = _capture(research_script._run)
+
+    assert code == private_runtime_cli.EXIT_CONFIG_OR_PRIVACY
+    assert stdout == ""
+    assert stderr == "PRIVATE_RESEARCH_SNAPSHOT:CONFIG_OR_PRIVACY_REJECTED\n"
+    assert imported is False
+    assert "private-value" not in stderr
 
 
 def test_attestation_script_import_failure_is_fixed(

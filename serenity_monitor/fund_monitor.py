@@ -197,6 +197,47 @@ _CATEGORY_CADENCE: Mapping[str, str] = {
     "portfolio_impact": "event",
 }
 
+# Public closed vocabularies for downstream aggregate-report adapters.  These
+# are deliberately enumerated here, where the monitor derives the values,
+# rather than re-accepting arbitrary identifier-shaped strings at transport
+# boundaries.
+FUND_MONITOR_CATEGORIES = frozenset(_CATEGORY_CADENCE)
+FUND_MONITOR_SCOPED_CATEGORIES = frozenset(
+    f"{dimension}.{category}"
+    for dimension in ("product_quality", "portfolio_fit")
+    for category in FUND_MONITOR_CATEGORIES
+)
+FUND_MONITOR_REASON_CODES = frozenset(
+    {
+        "unknown_legal_structure",
+        "unknown_economic_structure",
+        "unknown_portfolio_role",
+        "nonconfirming_risk_observation",
+        "judgment_inference_risk_observation",
+        "coverage_ineligible_fact_calculation_risk_observation",
+        "structure_hard_gate_blocked",
+        "verified_structural_hard_reject",
+        "confirmed_reject_signal",
+        "confirmed_watch_signal",
+        "material_event_under_review",
+        "scheduled_review_complete",
+        "review_not_due",
+        "fund_monitor.overall.partial_not_due",
+        *(f"fund_monitor.overall.{status.lower()}" for status in STATUSES),
+        *(
+            f"{prefix}{category}"
+            for prefix in (
+                "missing_required_",
+                "unknown_required_",
+                "source_not_healthy_",
+                "stale_required_",
+                "social_signal_unconfirmed_",
+            )
+            for category in FUND_MONITOR_CATEGORIES
+        ),
+    }
+)
+
 _PRIMARY_REQUIRED = frozenset(
     {
         "legal_structure",
@@ -1219,6 +1260,9 @@ __all__ = [
     "EVIDENCE_TYPES",
     "EVENT_CATEGORIES",
     "FRESHNESS_DAYS",
+    "FUND_MONITOR_CATEGORIES",
+    "FUND_MONITOR_REASON_CODES",
+    "FUND_MONITOR_SCOPED_CATEGORIES",
     "FundEvidence",
     "FundMetric",
     "FundMonitorRequest",

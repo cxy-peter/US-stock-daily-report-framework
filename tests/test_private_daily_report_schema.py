@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 
 from serenity_monitor.private_daily_report import (
     JSON_SCHEMA_URI,
+    LEGACY_SCHEMA_VERSION,
     SCHEMA_PATH,
     SCHEMA_VERSION,
     PrivateDailyReportCanonicalizationError,
@@ -152,6 +153,20 @@ def finalized_report() -> dict:
     return finalize_private_daily_report(report_draft(), target_key_sha256=TARGET_HASH)
 
 
+def legacy_finalized_report() -> dict:
+    report = finalized_report()
+    report["schema_version"] = LEGACY_SCHEMA_VERSION
+    report["delivery"]["delivery_id"] = compute_delivery_id(
+        delivery_date=report["delivery"]["delivery_date"],
+        timezone=report["delivery"]["timezone"],
+        channel=report["delivery"]["channel"],
+        target_key_sha256=TARGET_HASH,
+        schema_version=LEGACY_SCHEMA_VERSION,
+    )
+    report["report_id"] = compute_report_id(report)
+    return report
+
+
 def test_schema_is_valid_draft_2020_12_and_all_objects_are_closed():
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == JSON_SCHEMA_URI
@@ -184,6 +199,24 @@ def test_finalize_adds_versioned_identities_and_canonical_decimal_strings():
     assert report["dca"]["items"][0]["configured"]["amount"] == "10"
     assert report["portfolio"]["confirmed"]["cash"] == "0"
     assert validate_private_daily_report(report) == report
+
+
+def test_legacy_v1_report_replays_but_cannot_claim_v1_1_fields():
+    legacy = legacy_finalized_report()
+    assert validate_private_daily_report(legacy) == legacy
+
+    incompatible = deepcopy(legacy)
+    incompatible["research"]["social_decision"] = {
+        "raw_contribution": "0",
+        "effective_contribution": "0",
+        "effective_execution_coverage": "0",
+        "decision_weight_cap": "0",
+        "calibration_state": "research_only",
+        "research_only": True,
+    }
+    incompatible["report_id"] = compute_report_id(incompatible)
+    with pytest.raises(PrivateDailyReportSchemaError):
+        validate_private_daily_report(incompatible)
 
 
 def test_target_hash_and_raw_target_never_enter_report_document():

@@ -67,6 +67,22 @@ _MARKET_REGIMES = frozenset({"neutral", "risk_off", "risk_on", "stress", "transi
 _RIGHTS_BASES = frozenset(
     {"authorized_export", "licensed_dataset", "public_api", "public_web_derived", "user_provided"}
 )
+PREDICTION_WEIGHT_TOPICS = frozenset(_DEFAULT_ALLOWED_TOPICS)
+PREDICTION_WEIGHT_MARKET_REGIMES = frozenset(_MARKET_REGIMES)
+PREDICTION_WEIGHT_MODEL_VERSIONS = frozenset({"social-v1", "social-v2"})
+PREDICTION_WEIGHT_REASON_CODES = frozenset(
+    {
+        "minimum_samples_not_met",
+        "minimum_recent_samples_not_met",
+        "recent_hit_rate_failed",
+        "recent_brier_failed",
+        "hit_rate_distribution_drift",
+        "recent_hit_rate_weak",
+        "recent_brier_weak",
+        "hit_rate_drift",
+        "calibration_healthy",
+    }
+)
 _MODEL_VERSION = re.compile(
     r"(?:cross-platform|prediction|research|social|social-heat|xhs)-v[0-9]+(?:[._-][a-z0-9]+)*"
 )
@@ -3238,5 +3254,9 @@ __all__ = [
     "PredictionSignal",
     "PredictionValidationError",
     "PredictionWeightState",
+    "PREDICTION_WEIGHT_MARKET_REGIMES",
+    "PREDICTION_WEIGHT_MODEL_VERSIONS",
+    "PREDICTION_WEIGHT_REASON_CODES",
+    "PREDICTION_WEIGHT_TOPICS",
     "RightsLineage",
 ]

@@ -11,7 +11,10 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .private_daily_report import validate_private_daily_report
+from .private_daily_report import (
+    LEGACY_SCHEMA_VERSION,
+    validate_private_daily_report,
+)
 
 
 _WINDOWS_PATH_RE = re.compile(
@@ -364,7 +367,9 @@ def _render_dca(lines: list[str], report: Mapping[str, Any]) -> None:
     )
 
 
-def _render_research(lines: list[str], report: Mapping[str, Any]) -> None:
+def _render_research_v1_0(lines: list[str], report: Mapping[str, Any]) -> None:
+    """Preserve byte-stable rendering for already persisted v1.0 outbox rows."""
+
     research = report["research"]
     lines.extend(
         [
@@ -408,6 +413,101 @@ def _render_research(lines: list[str], report: Mapping[str, Any]) -> None:
             f"{_cell(item['score'])} | {purpose} | {_cell(item['summary'])} |"
         )
     lines.append("")
+    if research["notes"]:
+        lines.append("### 研究备注")
+        lines.append("")
+        for note in research["notes"]:
+            lines.append(f"- {_inline(note)}")
+        lines.append("")
+
+
+def _render_research(lines: list[str], report: Mapping[str, Any]) -> None:
+    if report["schema_version"] == LEGACY_SCHEMA_VERSION:
+        _render_research_v1_0(lines, report)
+        return
+    research = report["research"]
+    lines.extend(
+        [
+            "## 研究结论",
+            "",
+            f"- 总体观点：{_inline(research['overall_view'])}",
+            f"- 市场状态：{_inline(research['market_regime'])}",
+            f"- 风险预算乘数：{_inline(research['risk_budget_multiplier'])}",
+            "",
+            "### 基金监控",
+            "",
+            "| 基金 | 总状态 | 产品质量 | 组合适配 | 下次复核 | 事件数 | 摘要 | 理由代码 |",
+            "|---|---|---|---|---|---:|---|---|",
+        ]
+    )
+    funds = research["fund_monitoring"]
+    if not funds:
+        lines.append("| - | NOT_CONFIGURED | - | - | - | 0 | - | - |")
+    for fund in funds:
+        lines.append(
+            f"| {_cell(fund['fund_key'])} | {_cell(fund['status'])} | "
+            f"{_cell(fund.get('product_quality_status'))} | "
+            f"{_cell(fund.get('portfolio_fit_status'))} | "
+            f"{_cell(fund.get('next_due'))} | "
+            f"{len(fund.get('triggered_event_keys', []))} | "
+            f"{_cell(fund['summary'])} | {_join_reasons(fund['reason_codes'])} |"
+        )
+    lines.extend(
+        [
+            "",
+            "### 社交注意力（研究线索）",
+            "",
+            "| 平台 | 主题 | 方向 | 状态 | 注意力分数 | 注意力权重 | 候选执行权重 | 校准状态 | 有效执行权重 | 用途 | 摘要 |",
+            "|---|---|---|---|---:|---:|---:|---|---:|---|---|",
+        ]
+    )
+    social = research["social_attention"]
+    if not social:
+        lines.append("| - | - | unknown | not_configured | - | - | - | research_only | 0 | 仅研究 | - |")
+    for item in social:
+        purpose = "仅研究" if item["research_only"] else "契约允许的研究输入"
+        lines.append(
+            f"| {_cell(item['platform'])} | {_cell(item['topic'])} | "
+            f"{_cell(item['direction'])} | {_cell(item['status'])} | "
+            f"{_cell(item['score'])} | {_cell(item.get('attention_weight'))} | "
+            f"{_cell(item.get('candidate_execution_weight'))} | "
+            f"{_cell(item.get('calibration_state'))} | "
+            f"{_cell(item.get('effective_execution_weight'))} | "
+            f"{purpose} | {_cell(item['summary'])} |"
+        )
+    lines.append("")
+    social_decision = research.get("social_decision")
+    if social_decision is not None:
+        lines.extend(
+            [
+                "### 社交候选分校准",
+                "",
+                f"- 原始候选贡献：{_inline(social_decision['raw_contribution'])}",
+                f"- 校准后有效贡献：{_inline(social_decision['effective_contribution'])}",
+                f"- 有效执行覆盖：{_inline(social_decision['effective_execution_coverage'])}",
+                f"- 校准状态：{_inline(social_decision['calibration_state'])}",
+                "- 交易权限：无；该分数只能用于研究排序。",
+                "",
+            ]
+        )
+    calibration = research.get("signal_calibration", [])
+    if calibration:
+        lines.extend(
+            [
+                "### 预测信号校准",
+                "",
+                "| 平台 | 主题 | 模型 | 状态 | 期限 | 样本 | 近期样本 | 理由 |",
+                "|---|---|---|---|---:|---:|---:|---|",
+            ]
+        )
+        for item in calibration:
+            lines.append(
+                f"| {_cell(item['platform'])} | {_cell(item['topic'])} | "
+                f"{_cell(item['model_version'])} | {_cell(item['state'])} | "
+                f"{item['horizon']} | {item['sample_count']} | "
+                f"{item['recent_sample_count']} | {_join_reasons(item['reasons'])} |"
+            )
+        lines.append("")
     if research["notes"]:
         lines.append("### 研究备注")
         lines.append("")

@@ -103,5 +103,7 @@ states:
 - `quarantined`: failure or drift crossed the hard threshold.
 
 Every state carries `automatic_trading_permitted = false`. The private daily
-runtime adapter and scheduled horizon settlement remain separate work and must
+runtime can now carry sanitized weight states and use them to reduce or disable
+the social candidate score, but it still cannot trade. Automatic signal
+recording and scheduled horizon settlement remain separate work and must
 preserve this boundary.

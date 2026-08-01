@@ -56,7 +56,9 @@ from .private_report_store import PrivateReportFiles, persist_private_daily_repo
 from .private_research_adapter import (
     PrivateResearchAdapterError,
     PrivateResearchInput,
+    PrivateResearchProjection,
     build_private_research_projection,
+    validate_private_research_projection,
 )
 from .private_runtime_config import PrivateDailyRuntimeConfig
 from .private_runtime_paths import PrivateRuntimePaths
@@ -258,6 +260,8 @@ def _attempt_source_health(
 ) -> dict[str, Any]:
     if attempt.status == "success":
         status = "healthy"
+    elif attempt.status == "rejected":
+        status = "blocked"
     elif attempt.status in {"rate_limited", "transient_error"}:
         status = "degraded"
     elif attempt.status == "missing_credentials":
@@ -903,6 +907,7 @@ class PrivateDailyRuntime:
         *,
         preflight_block_reason: str | None = None,
         research_input: PrivateResearchInput | None = None,
+        research_projection: PrivateResearchProjection | None = None,
     ) -> PrivateDailyRunResult:
         if (
             preflight_block_reason is not None
@@ -1000,19 +1005,29 @@ class PrivateDailyRuntime:
                 blocked_session=None,
             )
 
-        if research_input is None:
+        if research_input is not None and research_projection is not None:
+            raise PrivateDailyRuntimeError("multiple_research_snapshots_forbidden")
+        if research_input is None and research_projection is None:
             research_document: Mapping[str, Any] | None = None
             research_source_health: tuple[Mapping[str, Any], ...] = ()
         else:
             try:
-                research_projection = build_private_research_projection(
-                    research_input,
+                candidate_projection = (
+                    build_private_research_projection(
+                        research_input,
+                        prepared_at=started_at,
+                    )
+                    if research_input is not None
+                    else research_projection
+                )
+                validated_projection = validate_private_research_projection(
+                    candidate_projection,
                     prepared_at=started_at,
                 )
             except PrivateResearchAdapterError as exc:
                 raise PrivateDailyRuntimeError("research_snapshot_invalid") from exc
-            research_document = research_projection.research
-            research_source_health = research_projection.source_health
+            research_document = validated_projection.research
+            research_source_health = validated_projection.source_health
 
         delivered = self.outbox.latest_delivered_checkpoint(
             target_key,

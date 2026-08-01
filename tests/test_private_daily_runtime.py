@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import hashlib
 import io
@@ -36,7 +37,12 @@ from serenity_monitor.private_daily_runtime import (
     PrivateDailyRuntimeError,
     initialize_private_ledger,
 )
-from serenity_monitor.private_research_adapter import PrivateResearchInput
+from serenity_monitor.private_daily_runtime import _attempt_source_health
+from serenity_monitor.private_research_adapter import (
+    PrivateResearchInput,
+    PrivateResearchProjection,
+    build_private_research_projection,
+)
 from serenity_monitor.private_runtime_config import (
     PUBLIC_EXAMPLE_NAME,
     load_private_daily_runtime_config,
@@ -49,6 +55,7 @@ from serenity_monitor.private_runtime_paths import (
 from serenity_monitor.provider_registry import (
     CloseObservation,
     ProviderRegistry,
+    ProviderAttempt,
 )
 from serenity_monitor.trading_calendar import ExchangeSessionResolver
 
@@ -68,6 +75,23 @@ class MutableClock:
 
     def __call__(self) -> dt.datetime:
         return self.value
+
+
+def test_rejected_close_attempt_is_blocked_in_source_health() -> None:
+    row = _attempt_source_health(
+        dt.date(2026, 1, 5),
+        "DEMO_EQ",
+        ProviderAttempt(
+            provider_id="twelve_data",
+            status="rejected",
+            detail="twelve_data: observation rejected by acceptance policy",
+            observed_at="2026-01-06T01:00:00Z",
+            observation_id="a" * 64,
+        ),
+    )
+
+    assert row["status"] == "blocked"
+    assert row["detail_code"] == "rejected"
 
 
 @pytest.fixture(autouse=True)
@@ -504,6 +528,70 @@ def test_invalid_research_is_rejected_before_provider_or_ledger_mutation(
                 as_of=clock.value + dt.timedelta(seconds=1)
             ),
         )
+
+    assert (len(first.calls), len(second.calls)) == calls
+    assert ledger.project("modeled").event_count == events
+
+
+def test_semantically_invalid_projection_is_rejected_before_any_mutation(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, first, second = _state(
+        tmp_path, config, clock
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    valid = build_private_research_projection(
+        PrivateResearchInput(as_of=clock.value),
+        prepared_at=clock.value,
+    )
+    research = copy.deepcopy(valid.research)
+    research["social_attention"] = [
+        {
+            "platform": "x",
+            "topic": "platform_aggregate",
+            "direction": "positive",
+            "status": "healthy",
+            "score": "0.5",
+            "attention_weight": "1",
+            "candidate_execution_weight": "0.1",
+            "calibration_state": "active",
+            "effective_execution_weight": "0.9",
+            "research_only": True,
+            "summary": "research only",
+        }
+    ]
+    research["signal_calibration"] = [
+        {
+            "platform": "x",
+            "topic": "semiconductors",
+            "model_version": "social-v1",
+            "market_regime": "risk_on",
+            "horizon": 20,
+            "state": "active",
+            "sample_count": 100,
+            "recent_sample_count": 20,
+            "reasons": ["calibration_healthy"],
+            "automatic_trading_permitted": False,
+        }
+    ]
+    research["social_decision"] = {
+        "raw_contribution": "0.01",
+        "effective_contribution": "0.01",
+        "effective_execution_coverage": "0.9",
+        "decision_weight_cap": "0.05",
+        "calibration_state": "active",
+        "research_only": True,
+    }
+    malformed = PrivateResearchProjection(research, valid.source_health)
+    calls = (len(first.calls), len(second.calls))
+    events = ledger.project("modeled").event_count
+
+    with pytest.raises(PrivateDailyRuntimeError, match="research_snapshot_invalid"):
+        _runtime(
+            config, calendar, ledger, outbox, reports, registry, clock
+        ).prepare(TARGET, research_projection=malformed)
 
     assert (len(first.calls), len(second.calls)) == calls
     assert ledger.project("modeled").event_count == events

@@ -29,8 +29,9 @@ confirmation.
 
 The accepted-close chain supports two independent observations:
 
-- Twelve Data `time_series`, requested as a one-day, regular-session bar with
-  `adjust=none` and `prepost=false`;
+- Twelve Data `time_series`, requested with the exact `date` session,
+  `adjust=none` and `prepost=false`, without an `outputsize` truncation
+  parameter or a date-only midnight upper bound;
 - Alpha Vantage `TIME_SERIES_DAILY`, using the raw/as-traded daily close rather
   than an adjusted endpoint.
 
@@ -107,6 +108,11 @@ An `AcceptedClose` therefore means that the **price-validation gate** passed.
 It intentionally exposes `price_gate_permitted`, not final settlement
 authorization. It is not, by itself, permission to mutate a portfolio.
 
+Network success and acceptance are separate states. If a response is fetched
+but fails symbol, MIC, calendar, currency, adjustment, unit or finality checks,
+its attempt is reported as `rejected/blocked`; it is never shown as a healthy
+provider merely because the HTTP request succeeded.
+
 ## Corporate actions and atomic settlement
 
 Raw prices avoid mixing incompatible adjustment conventions, but they do not
@@ -122,9 +128,11 @@ settled daily plan. A blocked batch marks every child close as ineligible for
 ledger input, including symbols whose individual price gate passed.
 
 Decision IDs are derived from stable target-session identity and close fields.
-The hash of the complete provider response is retained separately as evidence,
-because an expanding historical response must not change the ID of an unchanged
-target-session close. The ledger additionally enforces a unique
+The in-memory observation carries the complete-response hash, because an
+expanding historical response must not change the ID of an unchanged
+target-session close. Durable content-addressed provider-evidence persistence
+remains follow-up work and is not claimed by this release. The ledger
+additionally enforces a unique
 session/plan/event constraint rather than relying on a batch hash alone.
 
 ## Scheduling and finality
