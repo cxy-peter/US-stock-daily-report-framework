@@ -17,6 +17,9 @@ repository commit or branch is part of this provenance.
 ## Implemented and verified in this baseline
 
 - the complete `evaluate-us-funds` Skill and its quantitative self-test;
+- an offline deterministic fund monitor linked from the Skill, with separate
+  product-quality/portfolio-fit states, native cadence freshness, structured
+  event acknowledgements, explicit `NOT_DUE`, and immutable no-trade gates;
 - authorized-file `china_retail_attention` research overlay;
 - explicit deduplication, freshness, engagement and manipulation controls;
 - objective volatility, credit and breadth confirmation groups;
@@ -59,7 +62,8 @@ repository commit or branch is part of this provenance.
 - an automated corporate-action source and reconciliation workflow (the ledger
   already enforces an explicit per-symbol reconciliation gate);
 - integration of the legacy research council, objective-risk layer, social
-  attention and fund monitor into the new ledger-backed daily runtime;
+  attention and the implemented fund-monitor module into the new ledger-backed
+  daily runtime;
 - authorized production social-data adapters and persistent private Social Heat
   snapshots (the implemented model itself performs no collection);
 - automatic scheduling and settlement of prediction-ledger horizons from the

@@ -171,6 +171,15 @@ repeatable return sources, investor constraints, portfolio fit, implementation
 and current timing. It returns `PASS`, `WATCH`, `REJECT` or `NEED_INFO`; it is
 not an order-entry module.
 
+`serenity_monitor/fund_monitor.py` adds the offline scheduled/event monitoring
+boundary used by that Skill. It keeps product quality separate from portfolio
+fit, applies fixed point-in-time freshness cutoffs, preserves explicit unknowns,
+uses fund-scoped material-event acknowledgements and returns `NOT_DUE` when no
+complete review is due. Social evidence can open a question but cannot close a
+required category. Every trade, order, position and DCA capability remains
+hard-coded off. Production evidence adapters and private daily-report wiring
+are not included yet.
+
 ## Run the synthetic public smoke test
 
 ```bash
@@ -276,6 +285,7 @@ serenity_monitor/objective_signals.py    downside-only risk overlay
 serenity_monitor/china_retail_attention.py authorized social research
 serenity_monitor/social_heat.py           offline cross-platform Social Heat
 serenity_monitor/prediction_ledger.py      private signal outcome/calibration ledger
+serenity_monitor/fund_monitor.py           offline fund cadence/event monitor
 serenity_monitor/rules.py                deterministic research council
 serenity_monitor/sizing.py               portfolio and risk-group sizing
 serenity_monitor/dca_review.py            recurring-plan review
