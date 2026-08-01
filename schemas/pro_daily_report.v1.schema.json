@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/pro_daily_report.v1.schema.json",
+  "title": "Pro Daily Research Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_date",
+    "generated_at",
+    "report_status",
+    "portfolio_as_of",
+    "data_confidence",
+    "effective_risk_budget",
+    "market_state",
+    "portfolio_action",
+    "summary",
+    "source_health",
+    "dca",
+    "models",
+    "warnings",
+    "automatic_trading_permitted"
+  ],
+  "properties": {
+    "schema_version": {"const": "pro_daily_report/v1.0.0"},
+    "report_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "report_status": {"enum": ["completed", "blocked", "no_new_close"]},
+    "portfolio_as_of": {"type": "string"},
+    "data_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "effective_risk_budget": {"type": "number", "minimum": 0, "maximum": 1.05},
+    "market_state": {"type": "string"},
+    "portfolio_action": {"enum": ["HOLD", "RISK_REBALANCE", "PAUSE_AND_VERIFY"]},
+    "summary": {"type": "string"},
+    "source_health": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "status", "required", "detail"],
+        "properties": {
+          "source": {"type": "string"},
+          "status": {"type": "string"},
+          "required": {"type": "boolean"},
+          "detail": {"type": "string"}
+        }
+      }
+    },
+    "dca": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ticker",
+          "configured_daily_usd",
+          "proposed_daily_usd",
+          "status",
+          "reason",
+          "automatic_execution"
+        ],
+        "properties": {
+          "ticker": {"type": "string"},
+          "configured_daily_usd": {"type": "number", "minimum": 0},
+          "proposed_daily_usd": {"type": "number", "minimum": 0},
+          "status": {"type": "string"},
+          "reason": {"type": "string"},
+          "automatic_execution": {"const": false}
+        }
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trump_policy", "polymarket", "barra", "kalman", "manager_skill"],
+      "properties": {
+        "trump_policy": {"type": "object"},
+        "polymarket": {"type": "object"},
+        "barra": {"type": ["object", "null"]},
+        "kalman": {"type": ["object", "null"]},
+        "manager_skill": {"type": ["object", "null"]}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "automatic_trading_permitted": {"const": false}
+  }
+}

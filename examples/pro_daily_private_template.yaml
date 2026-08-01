@@ -1,0 +1,42 @@
+schema_version: pro_daily_config/v1.0.0
+runtime:
+  data_classification: private
+  allow_live_report: true
+  example_only: false
+
+demo_mode: false
+report_date: "2026-08-01"
+accepted_close_status: unknown
+objective_risk_multiplier: 1.0
+prediction_state: research_only
+
+# Copy this file outside Git, rename it to *.private.yaml and fill only local
+# owner-controlled paths. Do not commit it.
+paths:
+  portfolio_snapshot: private_data/portfolio_snapshot.json
+  asset_returns: private_data/asset_returns.csv
+  factor_returns: private_data/factor_returns.csv
+  policy_events: private_data/trump_policy_events.json
+  polymarket_events: private_data/polymarket_resolved_events.json
+  social_heat: private_data/social_heat.json
+  objective_market: private_data/objective_market.json
+  manager_returns: private_data/manager_returns.csv
+
+manager:
+  fund_column: fund_return
+  factor_columns: [MARKET, VALUE, MOMENTUM, QUALITY]
+
+manager_fragility:
+  gross_leverage: null
+  top10_concentration: null
+  liquidity_days: null
+  prime_broker_concentration: null
+  tenure_months: null
+  fund_age_months: null
+
+dca_plan:
+  PRIVATE_TICKER_1: 20
+  PRIVATE_TICKER_2: 20
+  PRIVATE_TICKER_3: 20
+  PRIVATE_TICKER_4: 20
+  PRIVATE_TICKER_5: 20
