@@ -25,6 +25,10 @@ def main() -> int:
         assert contract["advanced_models"]["trump_policy_transmission_index"]["independent_trade_trigger"] is False
         assert contract["advanced_models"]["polymarket_settlement_event_study"]["lookahead_permitted"] is False
         assert contract["advanced_models"]["social_heat"]["xiaohongshu_execution_weight"] == 0
+        ibkr = contract["advanced_models"]["ibkr_flex_readonly_reconciliation"]
+        assert ibkr["implemented_library"] is True
+        assert ibkr["automatic_ledger_mutation"] is False
+        assert ibkr["broker_order_capability"] is False
     except (OSError, KeyError, TypeError, AssertionError, yaml.YAMLError) as exc:
         print(f"project contract check failed: {type(exc).__name__}", file=sys.stderr)
         return 1
