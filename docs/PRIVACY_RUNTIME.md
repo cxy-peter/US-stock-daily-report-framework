@@ -18,10 +18,10 @@ runtime:
   allow_live_report: true
 ```
 
-`synthetic_example` is accepted only with `--mock --no-external`. A private
-configuration inside the repository must use a `.private.yaml` name and be
-matched by `.gitignore`. Private report output inside the repository must also
-be ignored. Missing or ambiguous classification fails before data collection.
+`synthetic_example` remains test-only. A live daily configuration must use a
+`.private.yaml` name and live outside Git worktrees and common cloud-sync
+folders; `.gitignore` alone is not a security boundary. Missing or ambiguous
+classification fails before data collection.
 The source-profile, manual-KOL and authorized Xiaohongshu inputs are checked at
 their resolved paths before reading; Git-tracked files and symlinks to tracked
 files are rejected.
@@ -34,7 +34,7 @@ they may not contain account value, cash, buying power, positions, share
 counts, cost basis, P/L, tax lots, broker exports, user-authorized social
 records, prediction ledgers or private reports.
 
-Recommended ignored paths:
+Legacy research inputs may still use ignored paths:
 
 ```text
 config/*.private.yaml
@@ -42,9 +42,12 @@ config/xiaohongshu_authorized.csv
 private/
 ```
 
-An external encrypted directory is also valid. Environment variables or a
-secret manager should hold credentials; configuration files should reference
-variable names rather than embed tokens.
+The daily ledger, outbox, reports and live daily configuration require a fixed
+local owner-only directory outside Git and cloud sync. Network/removable
+drives, symlinks, junctions, reparse points and hard links are rejected.
+Windows uses a protected DACL containing only the current user's full-control
+ACE; POSIX requires current ownership and mode `0700`/`0600`. Credentials and
+the GPT target remain environment-only.
 
 ## Public CI
 
@@ -56,13 +59,18 @@ Mock providers are accepted only in explicit `--mock --no-external` mode;
 their reports are labelled simulation-only and they do not read or write live
 state.
 
-## Private delivery roadmap
+## Implemented private prepare boundary
 
-A daily private report should run in a local or otherwise access-controlled
-environment. It should reconstruct the modeled portfolio from a private,
-append-only manual-trade and DCA ledger, write only to private storage, and send
-one user-visible post-close report. The framework never connects to a broker or
-claims that modeled DCA entries are broker-confirmed executions.
+The private prepare runtime reconstructs confirmed and modeled books from the
+append-only ledger, settles only the immutable base DCA plan at accepted
+official closes, creates one report slot per receiver/day and writes only to
+owner-only storage. User silence means no new owner-confirmed event; it does
+not infer a broker trade. The framework never connects to a broker or claims
+that modeled DCA entries are broker-confirmed executions.
+
+GPT transmission remains a separate deployment boundary. The recurring task
+must stay paused until the receiver exposes a verified stable idempotency key
+or delivery lookup; an ambiguous send is never blindly retried.
 
 ## Repository provenance
 

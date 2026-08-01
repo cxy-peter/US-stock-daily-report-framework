@@ -25,19 +25,19 @@ public repository
 ├── config/source_profiles.example.yaml generic source templates
 └── public CI                           mock + offline only
 
-private local runtime (gitignored)
-├── config/portfolio.private.yaml
-├── config/manual_external_views.private.yaml
-├── config/source_profiles.private.yaml
-├── config/strategy-profile.private.yaml
-├── config/xiaohongshu_authorized.csv
-└── private/reports/
+private local runtime (outside Git and cloud sync)
+├── private_daily_runtime.private.yaml
+├── portfolio-ledger.sqlite3
+├── daily-outbox.sqlite3
+└── reports/
 ```
 
-Private files are ignored by Git. Live execution fails closed unless the
-configuration declares `runtime.data_classification: private`, opts in to live
-reporting and uses an ignored private path. The synthetic public example is
-accepted only with `--mock --no-external`.
+The production daily runtime requires these files to be outside every Git
+worktree and common cloud-sync folder, even if a path is ignored. It rejects
+network/removable drives, links, junctions, reparse points and hard-linked
+files. POSIX ownership/mode and Windows protected owner-only ACLs are verified
+before use. The synthetic example is test-only and the production entrypoints
+reject it.
 
 This framework is publishable only from a history-free, privacy-audited root.
 Any operational repository that previously contained private runtime data must
@@ -119,8 +119,15 @@ fail-closed.
 view without recalculating accounting. `serenity_monitor/daily_outbox.py`
 stores one immutable private report per receiver/day and refuses a delivery
 adapter that has neither idempotency-key nor receiver-lookup support. It does
-not send a message itself, and the private runtime orchestrator is not yet
-wired. See [Private Daily Report Contract](docs/PRIVATE_DAILY_REPORT.md).
+not send a message itself.
+
+`serenity_monitor/private_daily_runtime.py` wires the calendar, accepted
+closes, corporate-action attestations, immutable DCA plan, dual-book ledger,
+report contract, content-addressed local files and outbox. It replays from the
+last successfully delivered report checkpoint, recovers partial/idempotent
+sessions oldest first and stops later sessions after the first failed gate.
+No broker API, order endpoint or automatic position change is present. See
+[Private Daily Report Contract](docs/PRIVATE_DAILY_REPORT.md).
 
 ## Social research boundary
 
@@ -162,36 +169,48 @@ All values and positions in `portfolio.example.yaml` are fictional.
 Mock output is labelled `SIMULATION ONLY` and never loads or writes the live
 `state.json` path.
 
-## Create a private local runtime
+## Prepare the private daily accounting runtime
 
-Copy, do not rename, the public templates and then enter private information
-only in the ignored copies:
-
-```powershell
-Copy-Item config/portfolio.example.yaml config/portfolio.private.yaml
-Copy-Item config/manual_external_views.example.yaml config/manual_external_views.private.yaml
-Copy-Item config/source_profiles.example.yaml config/source_profiles.private.yaml
-```
-
-Set the private portfolio file to:
+Use `config/private_daily_runtime.example.yaml` only as a schema reference.
+Create an owner-only file named `*.private.yaml` in a fixed local directory
+that is outside Git and cloud-sync software. Set its runtime classification to:
 
 ```yaml
 runtime:
   data_classification: private
   allow_live_report: true
+  example_only: false
+  execution_mode: modeled_manual_only
 ```
 
-Then run locally with an ignored output directory:
+The following environment variables are fixed by the contract; their values
+must never be embedded in YAML or command-line arguments:
+
+```text
+SERENITY_PRIVATE_CONFIG
+SERENITY_PRIVATE_ROOT
+CODEX_DAILY_TARGET_KEY
+TWELVE_DATA_API_KEY
+ALPHA_VANTAGE_API_KEY
+```
+
+Initialize the opening snapshot and both opening valuations explicitly once:
 
 ```bash
-python run_report.py \
-  --config config/portfolio.private.yaml \
-  --out-dir private/reports
+python scripts/initialize_private_daily.py
 ```
 
-The command writes files but does not print the report body to stdout. Review
-`private/reports/latest.md` locally. Keep credentials in local environment
-variables or a private secret store, never in YAML.
+Then prepare one private report/outbox item after the official close:
+
+```bash
+python scripts/run_private_daily.py
+```
+
+Both commands accept no CLI arguments. Normal stdout is empty; failures emit
+only a fixed error code, never a path, target, holding, amount, credential or
+traceback. The daily command does not create owner-confirmed fills: if the
+owner reports no trade, the ledger records no manual event and only the fixed
+base DCA plan is modeled at accepted closes.
 
 ## Public CI
 
@@ -205,10 +224,10 @@ synthetic offline smoke report in the runner's temporary directory. It has:
 - no artifact upload/download;
 - no report commit or write permission.
 
-A future private daily delivery runtime must still be deployed separately.
-The accepted-close, calendar and manual-ledger contracts are implemented and
-tested, but they are not yet wired into `run_report.py` or a recurring delivery
-job in this release.
+The private prepare runtime is implemented separately from legacy
+`run_report.py`. A verified GPT receiver adapter and recurring delivery job are
+still not enabled; the existing task must remain paused until receiver lookup
+or stable idempotency semantics are proven.
 
 ## Main files
 
@@ -223,6 +242,11 @@ schemas/private_daily_report.v1.schema.json owner-only report contract
 serenity_monitor/private_daily_report.py report validation and identities
 serenity_monitor/private_daily_markdown.py deterministic private Markdown
 serenity_monitor/daily_outbox.py          private delivery state machine
+serenity_monitor/private_daily_runtime.py private close/DCA/report orchestration
+serenity_monitor/private_runtime_config.py strict private runtime configuration
+serenity_monitor/private_runtime_paths.py external storage and privacy gates
+serenity_monitor/private_windows_security.py Windows owner-only ACL boundary
+serenity_monitor/private_runtime_cli.py    silent production entrypoints
 serenity_monitor/external_views.py       source collection and health
 serenity_monitor/credibility.py          source/claim/copy-trade scoring
 serenity_monitor/evidence.py             evidence and independence gates

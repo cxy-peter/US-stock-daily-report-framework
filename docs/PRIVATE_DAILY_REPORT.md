@@ -2,10 +2,11 @@
 
 ## Scope
 
-The private daily-report layer defines one versioned JSON document, one
-deterministic Chinese Markdown view and one local SQLite delivery outbox. It
-does not fetch prices, mutate the portfolio ledger, connect to a broker or send
-a message by itself.
+The private daily-report contract defines one versioned JSON document, one
+deterministic Chinese Markdown view and one local SQLite delivery outbox. The
+separate `private_daily_runtime.py` orchestrator feeds this contract from the
+accepted-close registry and private ledger. Neither layer connects to a broker
+or sends a message by itself.
 
 The machine contract is
 `schemas/private_daily_report.v1.schema.json`. Runtime reports, rendered
@@ -60,9 +61,12 @@ requires owner confirmation and a manual prompt. The schema fixes every
 `not_connected` and `unavailable`.
 
 Modeled DCA settlement records one row per required session and symbol. A
-settled row must use the immutable configured amount, accepted close and
-settlement identity. Research can propose a different amount, but that
-proposal cannot silently replace the configured base plan.
+`settled` or `already_settled` row must use the immutable configured amount,
+accepted close and settlement identity. `already_settled` means the accounting
+fact was committed before the current run; it does not mean the historical
+amount is zero or that a second purchase occurred. Research can propose a
+different amount, but that proposal cannot silently replace the configured
+base plan.
 
 ## Markdown view
 
@@ -104,20 +108,22 @@ text are not persisted. Enqueue time cannot precede `prepared_at`. Before
 every claim, the outbox revalidates canonical JSON, re-renders Markdown and
 recomputes report, delivery, ledger and content identities.
 
-## Deployment boundary
+## Prepare-runtime boundary
 
 The public CI compiles and tests these contracts with synthetic data only. It
 does not schedule a report, create a private database, upload an artifact or
 send a GPT message.
 
-A later private-runtime orchestrator must still:
+The implemented private runtime now:
 
 1. resolve all completed exchange sessions oldest first;
 2. obtain accepted closes and stop at the first failed gate;
 3. settle the modeled ledger and value both books;
 4. build and finalize this JSON document;
 5. enqueue it in an ignored private outbox; and
-6. use a receiver adapter whose deduplication capability has been verified.
+6. refuses to advance past an unresolved earlier delivery.
 
-Until that orchestration and replay verification exist, this contract is
-implemented but daily GPT delivery is not deployed.
+Offline replay verifies same-day idempotency, partial-valuation recovery,
+last-delivered checkpoint recovery, weekend no-new-close behavior and gate
+blocking. A receiver adapter whose deduplication capability has been verified
+is still required before daily GPT delivery can be activated.

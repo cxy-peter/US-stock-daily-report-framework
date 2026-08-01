@@ -114,7 +114,7 @@ solve splits, distributions, symbol changes or other corporate actions. A
 separate downstream corporate-action reconciliation gate must validate the
 instrument and session before any ledger mutation.
 
-The future private ledger must also apply an atomic batch rule: either every
+The private ledger also applies an atomic batch rule: either every
 configured ticker for the session passes the required calendar, accepted-close
 and corporate-action checks, or no automatic recurring-investment entry is
 posted for that batch. Partial price availability must not create a partially
@@ -124,7 +124,7 @@ ledger input, including symbols whose individual price gate passed.
 Decision IDs are derived from stable target-session identity and close fields.
 The hash of the complete provider response is retained separately as evidence,
 because an expanding historical response must not change the ID of an unchanged
-target-session close. The future ledger must additionally enforce a unique
+target-session close. The ledger additionally enforces a unique
 session/plan/event constraint rather than relying on a batch hash alone.
 
 ## Scheduling and finality
@@ -150,7 +150,6 @@ The registry:
 - does not turn social, KOL or research scores into settlement amounts;
 - does not make stale snapshots settlement-eligible.
 
-This release adds only the accepted-close provider registry and its validation
-contract. The private manual-trade/daily-DCA ledger, corporate-action
-reconciliation, idempotent session settlement and private GPT daily-report
-delivery belong to subsequent auditable pull requests.
+The registry is consumed by the separate private manual/DCA prepare runtime.
+Corporate actions still require explicit private attestations, and a verified
+GPT receiver adapter plus recurring delivery remain separate auditable work.

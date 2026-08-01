@@ -325,18 +325,18 @@ def _validate_dca(report: dict[str, Any], session_results: list[dict[str, Any]])
                 accepted_close = entry["accepted_close"]
                 accepted_close_id = entry["accepted_close_id"]
                 settlement_event_id = entry["settlement_event_id"]
-                if status == "settled":
+                if status in {"settled", "already_settled"}:
                     if amount != configured:
                         raise PrivateDailyReportSemanticError(
                             f"dca {symbol} {session} amount must equal configured.amount"
                         )
                     if spend <= 0 or quantity <= 0 or accepted_close is None:
                         raise PrivateDailyReportSemanticError(
-                            f"settled dca {symbol} {session} requires positive spend, quantity and accepted_close"
+                            f"accounted dca {symbol} {session} requires positive spend, quantity and accepted_close"
                         )
                     if accepted_close_id is None or settlement_event_id is None:
                         raise PrivateDailyReportSemanticError(
-                            f"settled dca {symbol} {session} requires close and settlement identities"
+                            f"accounted dca {symbol} {session} requires close and settlement identities"
                         )
                     if spend + residual != configured:
                         raise PrivateDailyReportSemanticError(

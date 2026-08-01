@@ -1,0 +1,86 @@
+schema_version: private_daily_runtime/v1.0.0
+runtime:
+  data_classification: synthetic_example
+  allow_live_report: false
+  example_only: true
+  execution_mode: modeled_manual_only
+
+private_daily_runtime:
+  report_timezone: Asia/Shanghai
+  primary_mic: XNAS
+  storage_root_env: SERENITY_PRIVATE_ROOT
+  max_backfill_sessions: 20
+
+  delivery:
+    channel: codex
+    target_env: CODEX_DAILY_TARGET_KEY
+
+  # Live use requires exactly these independent raw-close providers. API keys
+  # remain in TWELVE_DATA_API_KEY and ALPHA_VANTAGE_API_KEY, never in YAML.
+  providers: [twelve_data, alpha_vantage]
+  close_policy:
+    min_independent_sources: 2
+    warning_bps: "30"
+    block_bps: "75"
+    allow_warning_settlement: false
+
+  instruments:
+    - symbol: DEMO_BOND
+      asset_type: etf
+      exchange_mic: XNAS
+      currency: USD
+      calendar_id: XNYS
+      price_unit_multiplier: "1"
+      provider_symbols:
+        twelve_data: DEMO_BOND
+        alpha_vantage: DEMO_BOND
+    - symbol: DEMO_EQ
+      asset_type: etf
+      exchange_mic: XNAS
+      currency: USD
+      calendar_id: XNYS
+      price_unit_multiplier: "1"
+      provider_symbols:
+        twelve_data: DEMO_EQ
+        alpha_vantage: DEMO_EQ
+
+  ledger:
+    currency: USD
+    share_scale: 12
+    opening:
+      session: "2026-01-02"
+      cash: "1000"
+      positions:
+        - symbol: DEMO_BOND
+          quantity: "20"
+          average_economic_cost: "50"
+        - symbol: DEMO_EQ
+          quantity: "10"
+          average_economic_cost: "90"
+
+  dca_plan:
+    plan_id: synthetic-daily-base
+    version: v1
+    currency: USD
+    funding_mode: modeled_external_contribution
+    share_scale: 12
+    base_amounts:
+      DEMO_BOND: "10"
+      DEMO_EQ: "10"
+
+  # This is a synthetic fixture, not a live assertion. The live runtime never
+  # invents clear_none: missing, overlapping, expired or future attestations
+  # block modeled DCA before any settlement event is written.
+  corporate_actions:
+    mode: manual_attestation
+    attestations:
+      - symbol: DEMO_BOND
+        status: clear_none
+        valid_from_session: "2026-01-02"
+        valid_through_session: "2026-12-31"
+        attested_at: "2026-01-02T22:00:00Z"
+      - symbol: DEMO_EQ
+        status: clear_none
+        valid_from_session: "2026-01-02"
+        valid_through_session: "2026-12-31"
+        attested_at: "2026-01-02T22:00:00Z"

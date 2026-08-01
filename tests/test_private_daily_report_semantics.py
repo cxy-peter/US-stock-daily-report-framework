@@ -233,15 +233,20 @@ def test_complete_and_complete_with_warnings_are_valid_but_partial_is_removed():
 
 
 @pytest.mark.parametrize(
-    ("status", "gates"),
+    ("status", "gates", "accounted"),
     [
-        ("already_settled", ("passed", "passed", "passed", "passed")),
-        ("skipped_by_owner", ("passed", "passed", "passed", "not_attempted")),
+        ("already_settled", ("passed", "passed", "passed", "passed"), True),
+        (
+            "skipped_by_owner",
+            ("passed", "passed", "passed", "not_attempted"),
+            False,
+        ),
     ],
 )
-def test_idempotent_and_owner_skip_sessions_do_not_claim_a_new_modeled_fill(
+def test_idempotent_session_reports_prior_fact_while_owner_skip_reports_no_fill(
     status: str,
     gates: tuple[str, str, str, str],
+    accounted: bool,
 ):
     draft = complete_draft()
     draft["session_results"] = [
@@ -253,11 +258,16 @@ def test_idempotent_and_owner_skip_sessions_do_not_claim_a_new_modeled_fill(
         )
     ]
     draft["dca"]["items"][0]["modeled"]["sessions"] = [
-        _modeled_session("2026-07-31", status)
+        _modeled_session("2026-07-31", status, settled=accounted)
     ]
     report = finalize_private_daily_report(draft, target_key_sha256=TARGET_HASH)
     modeled = report["dca"]["items"][0]["modeled"]["sessions"][0]
-    assert modeled["amount"] == modeled["spend"] == modeled["quantity"] == "0"
+    if accounted:
+        assert modeled["amount"] == modeled["spend"] == "10"
+        assert modeled["quantity"] == "0.1"
+        assert modeled["settlement_event_id"] is not None
+    else:
+        assert modeled["amount"] == modeled["spend"] == modeled["quantity"] == "0"
 
 
 def test_blocked_first_run_requires_no_fabricated_nav_price_or_valuation():
