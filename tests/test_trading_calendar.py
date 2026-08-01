@@ -37,6 +37,18 @@ def test_calendar_provenance_normalizes_nyse_arca_alias_to_canonical_mic(resolve
     )
 
 
+def test_calendar_provenance_preserves_cboe_bzx_mic(resolver):
+    bats = resolver.provenance("BATS")
+    alias = resolver.provenance("CBOEBZX")
+
+    assert bats.instrument_mic == "BATS"
+    assert alias.instrument_mic == "BATS"
+    assert bats.calendar_name == alias.calendar_name == "XNYS"
+    assert resolver.session_close("2026-07-31", "BATS") == dt.datetime(
+        2026, 7, 31, 20, 0, tzinfo=dt.timezone.utc
+    )
+
+
 def test_dst_spring_and_fall_change_utc_close_without_changing_local_close(resolver):
     assert resolver.session_close("2026-03-06", "XNAS") == dt.datetime(
         2026, 3, 6, 21, 0, tzinfo=dt.timezone.utc
@@ -143,6 +155,28 @@ def test_unsettled_sessions_rejects_missing_non_session_and_reverse_state(resolv
         resolver.unsettled_sessions("2026-07-26", as_of, "XNAS")
     with pytest.raises(ExchangeSessionError, match="later than"):
         resolver.unsettled_sessions("2026-08-03", as_of, "XNAS")
+
+
+def test_future_session_offsets_are_calendar_driven_and_preserve_bats_support(resolver):
+    expected = {
+        1: dt.date(2026, 1, 5),
+        5: dt.date(2026, 1, 9),
+        20: dt.date(2026, 2, 2),
+        60: dt.date(2026, 3, 31),
+    }
+    assert resolver.future_session_offsets("2026-01-02", [60, 1, 20, 5], "XNAS") == expected
+    assert resolver.future_session_offsets("2026-01-02", [1, 5], "BATS") == {
+        1: dt.date(2026, 1, 5),
+        5: dt.date(2026, 1, 9),
+    }
+
+
+def test_future_session_offsets_fail_closed_for_bad_anchor_and_offsets(resolver):
+    for offsets in ([], [0], [-1], [True], [1, 1]):
+        with pytest.raises(ExchangeSessionError):
+            resolver.future_session_offsets("2026-01-02", offsets, "XNAS")
+    with pytest.raises(ExchangeSessionError, match="exchange session"):
+        resolver.future_session_offsets("2026-01-03", [1], "XNAS")
 
 
 def test_naive_as_of_and_unknown_mic_fail_closed(resolver):

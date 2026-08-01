@@ -136,10 +136,32 @@ authorized Xiaohongshu path accepts only a user-owned export, authorized API
 export or licensed dataset with an explicit rights attestation. It performs no
 login bypass, cookie extraction, API reversal or anti-bot workaround.
 
-Current Xiaohongshu model-blending weight is zero. Social observations are
-research-only and cannot independently trigger `OPEN`, `ADD`, `TRIM` or `EXIT`.
-Public output never persists record-level social hashes, timestamps or
-engagement data.
+`serenity_monitor/social_heat.py` provides the deterministic offline aggregation
+layer. It calculates breadth, entropy, independent-content counts, relative
+30-day heat, log engagement, sentiment disagreement, concentration, overlap,
+decay and manipulation quarantine. Platform priors start at Xiaohongshu 40%, X
+35%, Reddit 15% and other authorized sources 10%, with healthy-source
+re-normalization. Attention and candidate execution-score weights are separate:
+Xiaohongshu's execution weight is hard-coded to zero, and all social sources
+together are capped at 5% of the model score.
+
+All social output remains research-only and cannot independently trigger
+`OPEN`, `ADD`, `TRIM`, `EXIT` or an increased DCA. The module accepts controlled
+topic taxonomy IDs from a closed built-in list and irreversible identifiers,
+not raw posts, handles or URLs. Runtime policy may narrow the list but cannot
+add private labels. Public output never persists record-level social hashes,
+timestamps or engagement data. Production collection and private-runtime
+integration are not enabled by this model module.
+
+## Prediction research ledger
+
+`serenity_monitor/prediction_ledger.py` is a separate private/local SQLite event
+ledger for settling sanitized signals at 1, 5, 20 and 60 trading-session
+horizons. It uses immutable events and explicit reversals, accepted-close
+lineage and Decimal-only calculations for raw/factor-residual returns, hit,
+MFE, MAE, Brier calibration and grouped Rank IC. Rolling results yield
+`active`, `decayed`, `quarantined` or `research_only`; none of those states
+permits an automatic trade. See [Prediction Ledger](docs/PREDICTION_LEDGER.md).
 
 ## Fund research Skill
 
@@ -252,6 +274,8 @@ serenity_monitor/credibility.py          source/claim/copy-trade scoring
 serenity_monitor/evidence.py             evidence and independence gates
 serenity_monitor/objective_signals.py    downside-only risk overlay
 serenity_monitor/china_retail_attention.py authorized social research
+serenity_monitor/social_heat.py           offline cross-platform Social Heat
+serenity_monitor/prediction_ledger.py      private signal outcome/calibration ledger
 serenity_monitor/rules.py                deterministic research council
 serenity_monitor/sizing.py               portfolio and risk-group sizing
 serenity_monitor/dca_review.py            recurring-plan review

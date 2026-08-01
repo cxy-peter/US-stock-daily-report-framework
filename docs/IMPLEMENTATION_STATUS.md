@@ -44,6 +44,14 @@ repository commit or branch is part of this provenance.
   storage gates, same-handle config reads, POSIX ownership/modes and protected
   Windows owner-only ACL verification;
 - private-runtime JSON audit artifacts and focused regression tests;
+- an offline deterministic Social Heat model with authorization/source-health
+  gates, separate attention and candidate execution-score weights, provisional
+  cross-platform priors, 30-day baselines, manipulation quarantine and a hard
+  5% combined score cap; Xiaohongshu execution weight remains zero;
+- a private append-only prediction research ledger with 1/5/20/60-session
+  accepted-close settlement, raw/factor-residual outcomes, MFE/MAE, Brier,
+  grouped Rank IC, explicit reversals and automatic research-only/decay/
+  quarantine states;
 - this status record, so later work can distinguish code from proposals.
 
 ## Still roadmap, not current implementation
@@ -52,6 +60,10 @@ repository commit or branch is part of this provenance.
   already enforces an explicit per-symbol reconciliation gate);
 - integration of the legacy research council, objective-risk layer, social
   attention and fund monitor into the new ledger-backed daily runtime;
+- authorized production social-data adapters and persistent private Social Heat
+  snapshots (the implemented model itself performs no collection);
+- automatic scheduling and settlement of prediction-ledger horizons from the
+  private daily runtime;
 - a verified GPT receiver adapter and recurring private delivery deployment;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;
@@ -61,7 +73,6 @@ repository commit or branch is part of this provenance.
 - Kalman-filtered dynamic beta;
 - manager-skill bootstrap and timing models;
 - Brinson/Carino attribution and asset-allocation optimizer;
-- versioned prediction ledger and automatic signal quarantine.
 
 Each roadmap item should be implemented as a separate auditable module with
 point-in-time fixtures and focused tests. It must not be marked complete from a
