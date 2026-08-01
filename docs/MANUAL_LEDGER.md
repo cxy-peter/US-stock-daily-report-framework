@@ -156,10 +156,18 @@ instead of silently changing historical TWR.
 
 ## Owner interaction contract
 
+The opening snapshot has a separate one-time TTY attestation and receipt. That
+proof authorizes only the initial ledger checkpoint; it is not a reusable
+confirmation for later fills, cash flows, DCA overrides or reversals.
+
 When the research report suggests a rebalance, GPT asks the owner to report the
 actual fill. The ledger changes only after receiving unambiguous side, quantity,
 price, fees and effective time. A suggestion, target amount or silence is not an
 actual trade.
+
+The safe command/API that ingests those later owner-confirmed events is still a
+separate activation blocker. Until it is implemented, live reports must not
+infer a trade from prose, a recommendation or silence.
 
 An explicit session override can skip the base DCA for a date. A separate
 manual trade does not cancel the base plan by implication. Before valuation,

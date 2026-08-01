@@ -14,12 +14,21 @@ from pathlib import Path
 import pytest
 
 import scripts.check_private_daily_readiness as readiness_script
+import serenity_monitor.opening_owner_attestation as opening_attestation
 import serenity_monitor.private_daily_readiness as readiness
 from serenity_monitor.daily_outbox import (
     DailyReportOutbox,
     DeliveryAdapterCapabilities,
 )
 from serenity_monitor.portfolio_ledger import PortfolioLedger
+from serenity_monitor.opening_owner_attestation import (
+    OpeningLedgerBinding,
+    create_opening_owner_claim,
+    interactive_owner_presence,
+    opening_ledger_idempotency_key,
+    publish_opening_intent,
+    publish_opening_receipt,
+)
 from serenity_monitor.private_runtime_config import (
     PUBLIC_EXAMPLE_NAME,
     load_private_daily_runtime_config,
@@ -31,6 +40,7 @@ from serenity_monitor.private_daily_report import (
 from serenity_monitor.private_runtime_paths import (
     PrivateRuntimePathError,
     PrivateRuntimePaths,
+    ensure_private_storage,
     validate_existing_private_storage_root,
 )
 from test_private_daily_report_semantics import blocked_first_run_draft
@@ -50,6 +60,23 @@ OTHER_EXACTLY_ONCE = DeliveryAdapterCapabilities(
     False,
     "different-codex-thread-message/v1",
 )
+CONFIG_DIGEST = hashlib.sha256(
+    (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+).hexdigest()
+
+
+class _TTYBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _allow_attestation_temp_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        opening_attestation,
+        "validate_existing_private_storage_root",
+        lambda paths: paths.root,
+    )
 
 
 def _config():
@@ -67,6 +94,31 @@ def _paths(root: Path) -> PrivateRuntimePaths:
         report_directory=root / "reports",
         lock_file=root / "private-daily-runtime.lock",
     )
+
+
+def _create_opening_claim(config, paths: PrivateRuntimePaths) -> object:
+    ensure_private_storage(paths)
+    presence = interactive_owner_presence(
+        _TTYBuffer("CONFIRM 23456789AB\n"),
+        _TTYBuffer(),
+        challenge_factory=lambda: "23456789AB",
+    )
+    create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=CONFIG_DIGEST,
+        owner_presence=presence,
+        clock=lambda: NOW,
+    )
+    audit = opening_attestation.audit_opening_owner_attestation(
+        config,
+        paths,
+        config_bytes_sha256=CONFIG_DIGEST,
+        now=NOW,
+        ledger_binding=None,
+    )
+    assert audit.claim is not None
+    return audit.claim
 
 
 def _sha256(path: Path) -> str:
@@ -167,7 +219,7 @@ def test_readiness_contract_is_fixed_redacted_and_separates_activation_gates(
     status = {item["check_id"]: item["status"] for item in document["checks"]}
     assert status["provider_credentials"] == "passed"
     assert status["corporate_action_coverage"] == "blocked"
-    assert status["opening_owner_attestation"] == "not_implemented"
+    assert status["opening_owner_attestation"] == "blocked"
     assert status["manual_event_ingestion"] == "not_implemented"
     assert status["receiver_idempotency"] == "unverified"
     assert "synthetic-target" not in serialized
@@ -199,6 +251,229 @@ def test_ledger_readonly_audit_does_not_change_database_or_create_sidecars(
     assert _sha256(database) == before_hash
     assert database.stat().st_mtime_ns == before_mtime
     assert {item.name for item in tmp_path.iterdir()} == before_files
+
+
+def test_verified_claim_authorizes_initialization_without_enabling_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    paths = _paths(tmp_path / "runtime")
+    _create_opening_claim(config, paths)
+    monkeypatch.setattr(
+        readiness,
+        "validate_existing_private_storage_root",
+        lambda supplied: supplied.root,
+    )
+    environment = {
+        "CODEX_DAILY_TARGET_KEY": TARGET,
+        "TWELVE_DATA_API_KEY": "present",
+        "ALPHA_VANTAGE_API_KEY": "present",
+    }
+
+    result = readiness.evaluate_private_daily_readiness(
+        config,
+        paths,
+        environ=environment,
+        clock=lambda: NOW,
+        config_acl_passed=True,
+        config_bytes_sha256=CONFIG_DIGEST,
+    )
+    checks = {item.check_id: item for item in result.checks}
+
+    assert result.ready_for_initialize is True
+    assert result.operational_state == "needs_initialization"
+    assert result.next_safe_action == "initialize"
+    assert result.workflow_activation_allowed is False
+    assert checks["opening_owner_attestation"].status == "passed"
+    assert checks["opening_owner_attestation"].reason_code == (
+        "opening_attestation_pending_verified"
+    )
+
+
+def test_fresh_intent_without_opening_is_resumable_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    paths = _paths(tmp_path / "runtime")
+    claim = _create_opening_claim(config, paths)
+    publish_opening_intent(
+        claim,
+        paths,
+        clock=lambda: NOW + dt.timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        readiness,
+        "validate_existing_private_storage_root",
+        lambda supplied: supplied.root,
+    )
+
+    result = readiness.evaluate_private_daily_readiness(
+        config,
+        paths,
+        environ={
+            "CODEX_DAILY_TARGET_KEY": TARGET,
+            "TWELVE_DATA_API_KEY": "present",
+            "ALPHA_VANTAGE_API_KEY": "present",
+        },
+        clock=lambda: NOW + dt.timedelta(seconds=2),
+        config_acl_passed=True,
+        config_bytes_sha256=CONFIG_DIGEST,
+    )
+    check = {item.check_id: item for item in result.checks}[
+        "opening_owner_attestation"
+    ]
+
+    assert result.ready_for_initialize is True
+    assert result.operational_state == "needs_initialization"
+    assert check.status == "passed"
+    assert check.reason_code == "opening_attestation_commit_resume_available"
+
+
+def test_expired_intent_requires_new_interactive_owner_confirmation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    paths = _paths(tmp_path / "runtime")
+    claim = _create_opening_claim(config, paths)
+    publish_opening_intent(
+        claim,
+        paths,
+        clock=lambda: NOW + dt.timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        readiness,
+        "validate_existing_private_storage_root",
+        lambda supplied: supplied.root,
+    )
+
+    result = readiness.evaluate_private_daily_readiness(
+        config,
+        paths,
+        environ={
+            "CODEX_DAILY_TARGET_KEY": TARGET,
+            "TWELVE_DATA_API_KEY": "present",
+            "ALPHA_VANTAGE_API_KEY": "present",
+        },
+        clock=lambda: claim.expires_at,
+        config_acl_passed=True,
+        config_bytes_sha256=CONFIG_DIGEST,
+    )
+    check = {item.check_id: item for item in result.checks}[
+        "opening_owner_attestation"
+    ]
+
+    assert result.ready_for_initialize is False
+    assert result.operational_state == "blocked"
+    assert check.status == "blocked"
+    assert check.reason_code == (
+        "opening_attestation_resume_requires_owner_reconfirmation"
+    )
+
+
+def test_opening_only_binding_is_recoverable_then_consumed_readonly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    paths = _paths(tmp_path / "runtime")
+    claim = _create_opening_claim(config, paths)
+    intent = publish_opening_intent(
+        claim,
+        paths,
+        clock=lambda: NOW + dt.timedelta(seconds=1),
+    )
+    ledger = PortfolioLedger(paths.ledger_database, policy=config.ledger_policy)
+    ledger.initialize(
+        config.opening.session,
+        config.opening.cash,
+        config.opening.positions,
+        idempotency_key=opening_ledger_idempotency_key(claim, intent),
+        recorded_at=NOW + dt.timedelta(seconds=2),
+    )
+    _checkpoint(paths.ledger_database)
+    checkpoint = ledger.opening_checkpoint()
+    binding = OpeningLedgerBinding(
+        opening_event_id=checkpoint.opening_event_id,
+        opening_event_hash=checkpoint.opening_event_hash,
+        idempotency_key=checkpoint.idempotency_key,
+        created_at=checkpoint.created_at,
+    )
+    monkeypatch.setattr(
+        readiness,
+        "validate_existing_private_storage_root",
+        lambda supplied: supplied.root,
+    )
+    monkeypatch.setattr(
+        readiness,
+        "validate_existing_private_runtime_file",
+        lambda _paths_value, supplied: Path(supplied),
+    )
+    environment = {
+        "CODEX_DAILY_TARGET_KEY": TARGET,
+        "TWELVE_DATA_API_KEY": "present",
+        "ALPHA_VANTAGE_API_KEY": "present",
+    }
+
+    recovery = readiness.evaluate_private_daily_readiness(
+        config,
+        paths,
+        environ=environment,
+        clock=lambda: NOW + dt.timedelta(seconds=3),
+        config_acl_passed=True,
+        config_bytes_sha256=CONFIG_DIGEST,
+    )
+    recovery_check = {item.check_id: item for item in recovery.checks}[
+        "opening_owner_attestation"
+    ]
+    assert recovery.ready_for_initialize is True
+    assert recovery.ready_for_prepare is False
+    assert recovery_check.status == "passed"
+    assert recovery_check.reason_code == (
+        "opening_attestation_receipt_recovery_available"
+    )
+
+    publish_opening_receipt(
+        claim,
+        intent,
+        binding,
+        paths,
+        clock=lambda: NOW + dt.timedelta(seconds=4),
+    )
+    before = {
+        path.name: (path.stat().st_mtime_ns, _sha256(path))
+        for path in (
+            paths.opening_claim_file,
+            paths.opening_intent_file,
+            paths.opening_receipt_file,
+            paths.ledger_database,
+        )
+    }
+    consumed = readiness.evaluate_private_daily_readiness(
+        config,
+        paths,
+        environ=environment,
+        clock=lambda: NOW + dt.timedelta(seconds=5),
+        config_acl_passed=True,
+        config_bytes_sha256="0" * 64,
+    )
+    after = {
+        path.name: (path.stat().st_mtime_ns, _sha256(path))
+        for path in (
+            paths.opening_claim_file,
+            paths.opening_intent_file,
+            paths.opening_receipt_file,
+            paths.ledger_database,
+        )
+    }
+    consumed_check = {item.check_id: item for item in consumed.checks}[
+        "opening_owner_attestation"
+    ]
+    assert consumed.ready_for_initialize is True
+    assert consumed_check.reason_code == "opening_attestation_consumed_verified"
+    assert after == before
 
 
 def test_outbox_readonly_audit_does_not_change_database_or_create_sidecars(

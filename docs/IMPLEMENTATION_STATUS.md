@@ -50,6 +50,10 @@ repository commit or branch is part of this provenance.
 - a non-mutating, redacted private-daily activation audit with whole-database
   ledger/outbox verification, current receiver scoping, explicit operational
   states and a separate recurring-workflow activation decision;
+- a one-time interactive opening-owner attestation with exact config-byte and
+  stable opening-identity binding, a 30-minute claim/commit window, durable
+  intent, explicit re-confirmation after expiry, receipt recovery, read-only
+  readiness states and fail-closed replay/rollback detection;
 - an offline deterministic Social Heat model with authorization/source-health
   gates, separate attention and candidate execution-score weights, provisional
   cross-platform priors, 30-day baselines, manipulation quarantine and a hard
@@ -78,8 +82,8 @@ repository commit or branch is part of this provenance.
   private daily runtime, plus a new versioned report contract for structured
   prediction and social-topic detail;
 - a verified GPT receiver adapter and recurring private delivery deployment;
-- owner-opening attestation, safe manual-event ingestion and persisted live
-  end-to-end activation evidence for the private daily readiness contract;
+- safe manual-event ingestion and persisted live end-to-end activation evidence
+  for the private daily readiness contract;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;
 - VIX1D/VIX9D/VVIX/SKEW and options-chain ingestion;
