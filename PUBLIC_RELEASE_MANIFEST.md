@@ -14,6 +14,11 @@
 - Cboe official VIX/VIX3M history plus market-data fallbacks;
 - HXC context with an explicitly labelled KWEB ETF fallback;
 - private-runtime China retail attention and objective-market JSON audit artifacts;
+- raw-close consensus from Twelve Data and Alpha Vantage with an atomic
+  accepted-close price gate;
+- pinned U.S. exchange-calendar resolution for holidays, DST and early closes;
+- an offline append-only confirmed/modeled portfolio ledger with atomic base
+  DCA, owner-event corrections, accepted-close valuation and TWR;
 - the complete `evaluate-us-funds` Skill and quantitative self-test.
 
 ## Verification performed
@@ -42,6 +47,9 @@
 - Objective signals may only reduce risk after independent confirmation; they
   may never increase risk or create an order.
 - No broker execution or unrestricted external-social collection was run.
+- Modeled DCA is explicitly not a broker-confirmed execution. One active batch
+  is allowed per ledger session, and either book's valuation freezes that and
+  all earlier sessions against silent backfill.
 
 ## Not implemented and not claimed complete
 
