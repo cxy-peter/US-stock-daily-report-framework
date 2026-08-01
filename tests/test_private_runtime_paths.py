@@ -90,6 +90,10 @@ def test_external_root_is_derived_without_retaining_target(
     assert paths.ledger_database.parent == root
     assert paths.outbox_database.parent == root
     assert paths.report_directory.parent == root
+    assert paths.manual_event_request_file.parent == root
+    assert paths.manual_event_directory.parent == root
+    assert paths.manual_event_approved_directory.parent == paths.manual_event_directory
+    assert paths.manual_event_receipt_directory.parent == paths.manual_event_directory
     assert "owner-target" not in repr(paths)
     ensure_private_storage(paths)
     assert paths.root.is_dir()

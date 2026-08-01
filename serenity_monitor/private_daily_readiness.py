@@ -30,7 +30,9 @@ from .opening_owner_attestation import (
     OpeningLedgerBinding,
     audit_opening_owner_attestation,
 )
+from .manual_owner_event import ManualOwnerEventError, load_manual_event_queue
 from .portfolio_ledger import (
+    LedgerEventCheckpoint,
     LedgerNotInitializedError,
     OpeningPosition,
     PortfolioLedger,
@@ -267,6 +269,9 @@ class _LedgerAudit:
     latest_common_session: dt.date | None
     active_symbols: tuple[str, ...]
     opening_binding: OpeningLedgerBinding | None = None
+    event_checkpoints: tuple[LedgerEventCheckpoint, ...] = ()
+    chain_head: str | None = None
+    valuation_watermark: dt.date | None = None
 
     def __post_init__(self) -> None:
         if self.state not in _LEDGER_STATES:
@@ -275,6 +280,20 @@ class _LedgerAudit:
             raise PrivateDailyReadinessError("ledger_opening_binding_missing")
         if self.state not in {"opening_only", "ready"} and self.opening_binding is not None:
             raise PrivateDailyReadinessError("ledger_opening_binding_unexpected")
+        if any(
+            not isinstance(item, LedgerEventCheckpoint)
+            for item in self.event_checkpoints
+        ):
+            raise PrivateDailyReadinessError("ledger_event_checkpoint_invalid")
+        if self.state not in {"opening_only", "ready"} and self.event_checkpoints:
+            raise PrivateDailyReadinessError("ledger_event_checkpoint_unexpected")
+        if self.state in {"opening_only", "ready"}:
+            if not self.event_checkpoints or self.chain_head != self.event_checkpoints[-1].event_hash:
+                raise PrivateDailyReadinessError("ledger_chain_head_invalid")
+        elif self.chain_head is not None:
+            raise PrivateDailyReadinessError("ledger_chain_head_unexpected")
+        if self.state not in {"opening_only", "ready"} and self.valuation_watermark is not None:
+            raise PrivateDailyReadinessError("ledger_valuation_watermark_unexpected")
 
 
 @dataclass(frozen=True, repr=False)
@@ -282,6 +301,7 @@ class _OutboxAudit:
     state: str
     pending_status: str | None = None
     required_idempotency_scope_sha256: str | None = None
+    pending_ledger_last_event_hash: str | None = None
 
     def __post_init__(self) -> None:
         if self.state not in _OUTBOX_STATES - {"blocked"}:
@@ -292,6 +312,8 @@ class _OutboxAudit:
             raise PrivateDailyReadinessError("outbox_pending_status_required")
         if self.state != "pending_delivery" and self.pending_status is not None:
             raise PrivateDailyReadinessError("outbox_pending_status_unexpected")
+        if self.state != "pending_delivery" and self.pending_ledger_last_event_hash is not None:
+            raise PrivateDailyReadinessError("outbox_pending_ledger_hash_unexpected")
 
 
 def _utc_now(clock) -> dt.datetime:
@@ -536,6 +558,29 @@ def _audit_ledger_readonly(
                     "ledger_opening_configuration_mismatch"
                 )
             latest = ledger._latest_common_valuation_session_connection(connection)
+            event_checkpoints = tuple(
+                LedgerEventCheckpoint(
+                    event_id=str(row["event_id"]),
+                    event_hash=str(row["event_hash"]),
+                    idempotency_key=str(row["idempotency_key"]),
+                    session=dt.date.fromisoformat(str(row["session_date"])),
+                    event_type=str(row["event_type"]),
+                    source_class=str(row["source_class"]),
+                )
+                for row in connection.execute(
+                    "SELECT event_id, event_hash, idempotency_key, session_date, "
+                    "event_type, source_class FROM ledger_events ORDER BY sequence_no"
+                ).fetchall()
+            )
+            watermark_row = connection.execute(
+                "SELECT MAX(session_date) AS session_date FROM ledger_events "
+                "WHERE event_type = 'valuation'"
+            ).fetchone()
+            valuation_watermark = (
+                None
+                if watermark_row is None or watermark_row["session_date"] is None
+                else dt.date.fromisoformat(str(watermark_row["session_date"]))
+            )
             symbols = set(config.dca_plan.base_amounts)
             if latest is not None:
                 for book_kind in ("confirmed", "modeled"):
@@ -559,6 +604,9 @@ def _audit_ledger_readonly(
                     idempotency_key=str(opening_row["idempotency_key"]),
                     created_at=_parse_readonly_utc(opening_row["created_at"]),
                 ),
+                event_checkpoints,
+                event_checkpoints[-1].event_hash,
+                valuation_watermark,
             )
     except PrivateDailyReadinessError:
         raise
@@ -584,6 +632,21 @@ def _audit_outbox_readonly(
         with _immutable_sqlite(database_path) as connection:
             _verify_outbox_schema(connection)
             rows = outbox._verified_rows(connection)
+            foreign_unresolved = [
+                record
+                for record, _report in rows
+                if record.status
+                in {"prepared", "sending", "delivery_unknown", "retryable"}
+                and not (
+                    hmac.compare_digest(
+                        record.target_key_sha256,
+                        target_key_sha256,
+                    )
+                    and record.channel == channel
+                )
+            ]
+            if foreign_unresolved:
+                return _OutboxAudit("conflict")
             matches = [
                 record
                 for record, _report in rows
@@ -633,6 +696,7 @@ def _audit_outbox_readonly(
                     "pending_delivery",
                     pending_status=pending.status,
                     required_idempotency_scope_sha256=required_scope,
+                    pending_ledger_last_event_hash=pending.ledger_last_event_hash,
                 )
             if any(record.delivery_date == delivery_date for record in delivered):
                 return _OutboxAudit("already_complete")
@@ -700,8 +764,8 @@ def evaluate_private_daily_readiness(
         ),
         "manual_event_ingestion": _check(
             "manual_event_ingestion",
-            "not_implemented",
-            "manual_event_ingestion_not_implemented",
+            "not_run",
+            "manual_event_ingestion_not_checked",
         ),
         "opening_owner_attestation": _check(
             "opening_owner_attestation",
@@ -807,6 +871,59 @@ def evaluate_private_daily_readiness(
     else:
         checks["ledger_integrity"] = _check(
             "ledger_integrity", "blocked", "ledger_storage_unavailable"
+        )
+
+    if storage_ok and ledger_audit.state in {"opening_only", "ready"}:
+        checkpoints = {
+            item.event_id: item for item in ledger_audit.event_checkpoints
+        }
+        try:
+            pending_manual = load_manual_event_queue(
+                config,
+                paths,
+                checkpoints.get,
+                ledger_audit.valuation_watermark,
+            )
+            checks["manual_event_ingestion"] = _check(
+                "manual_event_ingestion",
+                "passed",
+                (
+                    "owner_event_pending_consumption"
+                    if pending_manual
+                    else "manual_event_ingestion_available"
+                ),
+            )
+        except ManualOwnerEventError as exc:
+            reason = {
+                "manual_event_request_requires_confirmation": (
+                    "owner_event_confirmation_required"
+                ),
+                "manual_event_after_valuation_finality": (
+                    "owner_event_after_valuation_finality"
+                ),
+            }.get(exc.code, "owner_event_integrity_failed")
+            checks["manual_event_ingestion"] = _check(
+                "manual_event_ingestion",
+                "blocked",
+                reason,
+            )
+        except Exception:
+            checks["manual_event_ingestion"] = _check(
+                "manual_event_ingestion",
+                "blocked",
+                "owner_event_integrity_failed",
+            )
+    elif ledger_audit.state in {"missing", "not_initialized"}:
+        checks["manual_event_ingestion"] = _check(
+            "manual_event_ingestion",
+            "not_run",
+            "manual_event_ingestion_requires_initialized_ledger",
+        )
+    else:
+        checks["manual_event_ingestion"] = _check(
+            "manual_event_ingestion",
+            "blocked",
+            "manual_event_ingestion_storage_or_ledger_unavailable",
         )
 
     opening_attestation_state = "unsafe"
@@ -924,7 +1041,25 @@ def evaluate_private_daily_readiness(
             "delivery_target_required_for_outbox_scope",
         )
 
-    if receiver_capabilities is None:
+    pending_checkpoint_stale = (
+        outbox_audit is not None
+        and outbox_audit.state == "pending_delivery"
+        and (
+            outbox_audit.pending_ledger_last_event_hash is None
+            or ledger_audit.chain_head is None
+            or not hmac.compare_digest(
+                outbox_audit.pending_ledger_last_event_hash,
+                ledger_audit.chain_head,
+            )
+        )
+    )
+    if pending_checkpoint_stale:
+        checks["receiver_idempotency"] = _check(
+            "receiver_idempotency",
+            "blocked",
+            "prepared_report_ledger_head_stale",
+        )
+    elif receiver_capabilities is None:
         checks["receiver_idempotency"] = _check(
             "receiver_idempotency",
             "unverified",
@@ -1045,6 +1180,7 @@ def evaluate_private_daily_readiness(
         "corporate_action_coverage",
         "delivery_target",
         "ledger_integrity",
+        "manual_event_ingestion",
         "opening_owner_attestation",
         "provider_call_budget",
         "provider_credentials",
@@ -1167,8 +1303,8 @@ def _blocked_contract(now: dt.datetime, reason_code: str) -> PrivateDailyActivat
     )
     checks["manual_event_ingestion"] = _check(
         "manual_event_ingestion",
-        "not_implemented",
-        "manual_event_ingestion_not_implemented",
+        "not_run",
+        "manual_event_ingestion_not_run",
     )
     checks["live_end_to_end_trial"] = _check(
         "live_end_to_end_trial",
