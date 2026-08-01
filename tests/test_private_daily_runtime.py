@@ -16,8 +16,10 @@ from serenity_monitor.private_daily_report import validate_private_daily_report
 from serenity_monitor.private_daily_runtime import (
     PrivateDailyIntegrityError,
     PrivateDailyRuntime,
+    PrivateDailyRuntimeError,
     initialize_private_ledger,
 )
+from serenity_monitor.private_research_adapter import PrivateResearchInput
 from serenity_monitor.private_runtime_config import (
     PUBLIC_EXAMPLE_NAME,
     load_private_daily_runtime_config,
@@ -191,6 +193,66 @@ def test_initialize_and_single_session_fixed_dca_report(tmp_path: Path) -> None:
     assert len(first.calls) == len(second.calls) == 4
 
 
+def test_aggregate_research_projection_cannot_change_dca_or_actions(tmp_path: Path) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, first, second = _state(
+        tmp_path, config, clock
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+
+    result = _runtime(
+        config, calendar, ledger, outbox, reports, registry, clock
+    ).prepare(
+        TARGET,
+        research_input=PrivateResearchInput(as_of=clock.value),
+    )
+
+    report = validate_private_daily_report(
+        outbox.load_validated_content(result.delivery_id).report
+    )
+    assert [item["configured"]["amount"] for item in report["dca"]["items"]] == [
+        "10",
+        "10",
+    ]
+    assert all(
+        item["proposed"]["automatic_execution"] is False
+        for item in report["dca"]["items"]
+    )
+    assert all(item["automatic_execution"] is False for item in report["actions"])
+    assert report["research"]["market_regime"] == "unknown"
+    assert report["research"]["risk_budget_multiplier"] == "0"
+    assert "research.snapshot" in {
+        item["source_id"] for item in report["source_health"]
+    }
+
+
+def test_invalid_research_is_rejected_before_provider_or_ledger_mutation(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, first, second = _state(
+        tmp_path, config, clock
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    calls = (len(first.calls), len(second.calls))
+    events = ledger.project("modeled").event_count
+
+    with pytest.raises(PrivateDailyRuntimeError, match="research_snapshot_invalid"):
+        _runtime(
+            config, calendar, ledger, outbox, reports, registry, clock
+        ).prepare(
+            TARGET,
+            research_input=PrivateResearchInput(
+                as_of=clock.value + dt.timedelta(seconds=1)
+            ),
+        )
+
+    assert (len(first.calls), len(second.calls)) == calls
+    assert ledger.project("modeled").event_count == events
+
+
 def test_same_day_slot_reuses_outbox_without_provider_or_ledger_mutation(tmp_path: Path) -> None:
     config = _config()
     clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
@@ -203,7 +265,12 @@ def test_same_day_slot_reuses_outbox_without_provider_or_ledger_mutation(tmp_pat
     calls = (len(first.calls), len(second.calls))
     events = ledger.project("modeled").event_count
 
-    replay = runtime.prepare(TARGET)
+    replay = runtime.prepare(
+        TARGET,
+        research_input=PrivateResearchInput(
+            as_of=clock.value + dt.timedelta(days=1)
+        ),
+    )
 
     assert replay.status == "existing"
     assert replay.delivery_id == first_result.delivery_id
@@ -224,7 +291,12 @@ def test_prior_prepared_delivery_blocks_next_day_before_provider_or_ledger(tmp_p
     events = ledger.project("modeled").event_count
     clock.value = dt.datetime(2026, 1, 7, 5, tzinfo=dt.timezone.utc)
 
-    blocked = runtime.prepare(TARGET)
+    blocked = runtime.prepare(
+        TARGET,
+        research_input=PrivateResearchInput(
+            as_of=clock.value + dt.timedelta(days=1)
+        ),
+    )
 
     assert blocked.status == "pending_prior_delivery"
     assert (len(first.calls), len(second.calls)) == calls

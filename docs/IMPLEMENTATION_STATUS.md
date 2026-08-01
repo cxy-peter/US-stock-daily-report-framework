@@ -55,19 +55,25 @@ repository commit or branch is part of this provenance.
   accepted-close settlement, raw/factor-residual outcomes, MFE/MAE, Brier,
   grouped Rank IC, explicit reversals and automatic research-only/decay/
   quarantine states;
+- a pure private-report research adapter that accepts only aggregate fund and
+  Social Heat model outputs, validates all no-trade flags before ledger work,
+  emits deterministic sanitized report/source-health rows and leaves DCA,
+  accounting actions and the manual-trade prompt unchanged;
 - this status record, so later work can distinguish code from proposals.
 
 ## Still roadmap, not current implementation
 
 - an automated corporate-action source and reconciliation workflow (the ledger
   already enforces an explicit per-symbol reconciliation gate);
-- integration of the legacy research council, objective-risk layer, social
-  attention and the implemented fund-monitor module into the new ledger-backed
-  daily runtime;
+- integration of the legacy research council and objective-risk layer into the
+  new ledger-backed daily runtime; the fund/Social Heat aggregate projection is
+  implemented, while owner-only snapshot persistence and evidence adapters are
+  still missing;
 - authorized production social-data adapters and persistent private Social Heat
   snapshots (the implemented model itself performs no collection);
 - automatic scheduling and settlement of prediction-ledger horizons from the
-  private daily runtime;
+  private daily runtime, plus a new versioned report contract for structured
+  prediction and social-topic detail;
 - a verified GPT receiver adapter and recurring private delivery deployment;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;

@@ -117,11 +117,20 @@ send a GPT message.
 The implemented private runtime now:
 
 1. resolve all completed exchange sessions oldest first;
-2. obtain accepted closes and stop at the first failed gate;
-3. settle the modeled ledger and value both books;
-4. build and finalize this JSON document;
-5. enqueue it in an ignored private outbox; and
-6. refuses to advance past an unresolved earlier delivery.
+2. validate any already-aggregated fund/Social Heat research snapshot before
+   ledger mutation, while preserving the prior accounting-only fallback;
+3. obtain accepted closes and stop at the first failed gate;
+4. settle the modeled ledger and value both books;
+5. build and finalize this JSON document;
+6. enqueue it in an ignored private outbox; and
+7. refuses to advance past an unresolved earlier delivery.
+
+The aggregate research adapter does not load raw posts, URLs, author/content
+identifiers, credentials or paths. Report v1.0 carries fund status and one
+platform aggregate per social source without inventing a platform/topic cross;
+prediction-ledger and topic-level projections remain deferred to a future
+schema version. Research input cannot change configured or modeled DCA,
+portfolio-ledger events, accounting actions or the manual-trade prompt.
 
 Offline replay verifies same-day idempotency, partial-valuation recovery,
 last-delivered checkpoint recovery, weekend no-new-close behavior and gate

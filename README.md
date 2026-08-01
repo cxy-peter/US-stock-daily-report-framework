@@ -150,8 +150,10 @@ All social output remains research-only and cannot independently trigger
 topic taxonomy IDs from a closed built-in list and irreversible identifiers,
 not raw posts, handles or URLs. Runtime policy may narrow the list but cannot
 add private labels. Public output never persists record-level social hashes,
-timestamps or engagement data. Production collection and private-runtime
-integration are not enabled by this model module.
+timestamps or engagement data. The owner-only runtime can now project one
+sanitized aggregate row per available platform into the private report; it
+does not collect production data, persist topic-level records or turn the
+result into an action.
 
 ## Prediction research ledger
 
@@ -177,8 +179,10 @@ fit, applies fixed point-in-time freshness cutoffs, preserves explicit unknowns,
 uses fund-scoped material-event acknowledgements and returns `NOT_DUE` when no
 complete review is due. Social evidence can open a question but cannot close a
 required category. Every trade, order, position and DCA capability remains
-hard-coded off. Production evidence adapters and private daily-report wiring
-are not included yet.
+hard-coded off. A pure aggregate adapter now carries the fund status, controlled
+reason codes and the separate product-quality/portfolio-fit states into the
+private report summary. Production evidence collection remains owner-supplied
+and is not enabled by the public framework.
 
 ## Run the synthetic public smoke test
 
@@ -242,6 +246,14 @@ only a fixed error code, never a path, target, holding, amount, credential or
 traceback. The daily command does not create owner-confirmed fills: if the
 owner reports no trade, the ledger records no manual event and only the fixed
 base DCA plan is modeled at accepted closes.
+
+`serenity_monitor/private_research_adapter.py` is the no-I/O bridge for
+already-computed `FundMonitorResult` and `SocialHeatResult` aggregates. The
+runtime validates this input before any ledger mutation. It exposes only
+controlled aggregate rows and optional source-health status; it cannot modify
+the ledger, configured DCA, report actions or manual-trade prompt. The current
+v1.0 report intentionally omits prediction-ledger and social-topic detail until
+a new versioned report contract is introduced.
 
 ## Public CI
 
