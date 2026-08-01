@@ -2,16 +2,17 @@
 
 An auditable U.S. investment-research framework with deterministic market
 analysis, primary-source collection, KOL credibility gates, portfolio-capacity
-checks, recurring-investment review, accepted-close validation and
-Markdown/CSV/JSON output.
+checks, recurring-investment review, accepted-close validation, manual-event
+accounting and Markdown/CSV/JSON output.
 
 The public repository contains framework code and synthetic examples only. It
 does not contain the repository owner's account value, holdings, share counts,
 cash, buying power, cost basis, tax lots, broker credentials or private reports.
 The system has no broker order endpoint.
 
-> **Implementation boundary:** the verified code is the v2.3 baseline;
-> unimplemented Pro modules remain roadmap items. See
+> **Implementation boundary:** the verified code is the v2.3 research baseline
+> plus the modules explicitly listed as implemented; remaining Pro modules are
+> roadmap items. See
 > [Verified Implementation Status](docs/IMPLEMENTATION_STATUS.md).
 
 ## Public/private boundary
@@ -85,9 +86,25 @@ conflict.
 Agreement at or below 30 bps passes the price gate. A 30--75 bps warning is
 blocked from settlement by default, and a difference above 75 bps is blocked.
 Single-source, adjusted, mock, snapshot, stale or wrong-session observations
-remain display-only. This registry does not mutate holdings: exchange-calendar
-completion, corporate actions and the private atomic ledger remain downstream
-gates. See [Provider Registry](docs/PROVIDER_REGISTRY.md).
+remain display-only. This registry does not mutate holdings. Exchange-calendar
+completion, corporate actions and the private atomic ledger are separate
+downstream gates. See [Provider Registry](docs/PROVIDER_REGISTRY.md).
+
+## Private manual ledger
+
+`serenity_monitor/portfolio_ledger.py` provides an offline, append-only SQLite
+ledger with separate `confirmed` and `modeled` books. Owner-reported fills,
+cash, income, fees and splits enter both books. The modeled book additionally
+posts the configured base DCA after the calendar, accepted-close,
+corporate-action and funding gates all pass. Silence never creates a manual
+trade, and no broker login or order method exists.
+
+`serenity_monitor/trading_calendar.py` uses a pinned exchange calendar for DST,
+holidays and early closes. One session can contain only one atomic modeled-DCA
+batch, and repeated runs are content-checked for idempotency. Valuations require
+current accepted closes for every non-zero position and calculate Decimal-only
+P/L and time-weighted return. The database and derived output must stay in an
+ignored private runtime. See [Manual Ledger](docs/MANUAL_LEDGER.md).
 
 ## Social research boundary
 
@@ -172,10 +189,10 @@ synthetic offline smoke report in the runner's temporary directory. It has:
 - no artifact upload/download;
 - no report commit or write permission.
 
-A future private daily delivery runtime must be deployed separately after the
-manual private ledger, corporate-action/calendar gates and delivery controls
-are implemented and verified. The accepted-close price gate is implemented,
-but it is not yet wired to daily accounting in this release.
+A future private daily delivery runtime must still be deployed separately.
+The accepted-close, calendar and manual-ledger contracts are implemented and
+tested, but they are not yet wired into `run_report.py` or a recurring delivery
+job in this release.
 
 ## Main files
 
@@ -184,6 +201,8 @@ config/portfolio.example.yaml           fictional public configuration
 scripts/check_public_privacy.py          tracked-tree privacy gate
 serenity_monitor/data.py                 market-data providers
 serenity_monitor/provider_registry.py    accepted-close price validation
+serenity_monitor/trading_calendar.py     exchange-session completion
+serenity_monitor/portfolio_ledger.py     private manual/DCA accounting
 serenity_monitor/external_views.py       source collection and health
 serenity_monitor/credibility.py          source/claim/copy-trade scoring
 serenity_monitor/evidence.py             evidence and independence gates

@@ -25,13 +25,18 @@ repository commit or branch is part of this provenance.
 - a separate accepted-close provider registry for raw Twelve Data and Alpha
   Vantage daily observations, with exact-session identity gates, independent
   source consensus, deterministic audit IDs and atomic batch price gating;
+- pinned U.S. exchange-session resolution with DST, holiday and early-close
+  handling while preserving each instrument's MIC identity;
+- an offline append-only SQLite ledger with confirmed and modeled books,
+  owner-confirmed events, atomic base-DCA settlement, exact Decimal accounting,
+  accepted-close valuation and time-weighted returns;
 - private-runtime JSON audit artifacts and focused regression tests;
 - this status record, so later work can distinguish code from proposals.
 
 ## Still roadmap, not current implementation
 
-- exchange-calendar completion and corporate-action reconciliation;
-- the private manual-event/DCA accounting ledger and return calculation;
+- an automated corporate-action source and reconciliation workflow (the ledger
+  already enforces an explicit per-symbol reconciliation gate);
 - the stable private GPT daily-report contract and recurring delivery runtime;
 - Trump Policy Transmission Index and White House event lifecycle;
 - point-in-time Polymarket event settlement studies;
@@ -47,6 +52,6 @@ Each roadmap item should be implemented as a separate auditable module with
 point-in-time fixtures and focused tests. It must not be marked complete from a
 document description alone.
 
-The accepted-close registry is currently an isolated price-validation contract.
-It does not change `run_report.py`, portfolio state, DCA review output or any
-private ledger, and it does not connect to a broker.
+The accepted-close registry, calendar and private ledger are composable
+contracts, but are not yet connected to `run_report.py` or recurring GPT
+delivery. None of these modules connects to a broker or submits an order.
