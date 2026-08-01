@@ -36,6 +36,21 @@ live credentials, report artifact, Actions summary or repository writeback.
 - versioned private daily-report JSON, deterministic Markdown and local outbox;
 - activation readiness audit, crash recovery and replay/idempotency controls.
 
+### Read-only IBKR Flex reconciliation
+
+- Flex Web Service v3 `SendRequest`/`GetStatement` client with bounded polling;
+- HTTPS host validation, sanitized errors and token-redacted client output;
+- parsing for account summary, open positions, trades, cash transactions, fees
+  and corporate actions;
+- account-ID redaction and statement evidence digest;
+- read-only comparison of broker positions/cash with the confirmed local book;
+- structured `MATCHED`, `MISSING_LOCAL_EVENT`, `UNEXPECTED_BROKER_EVENT`,
+  `QUANTITY_MISMATCH`, `CASH_MISMATCH` and `NEED_OWNER_CONFIRMATION` results;
+- `automatic_ledger_mutation_permitted=false` in every result.
+
+The library is tested with synthetic XML. No real token, query or private broker
+statement is part of the public framework.
+
 ### Pro research suite v1
 
 The following offline libraries are implemented under
@@ -58,20 +73,22 @@ the fragility/copy-trade gate.
 
 - the Pro suite is not yet embedded as a versioned enrichment object inside the
   ledger-backed private daily-report contract;
+- the IBKR Flex library is not yet wired to owner-only credentials, persisted
+  reconciliation evidence or the private ledger confirmation queue;
 - Social Heat and fund-monitor aggregates can enter the private report, but
   production source adapters and persistent owner-only snapshots are incomplete;
 - prediction-ledger settlement exists, but the private daily runtime does not
   yet schedule every due horizon automatically;
-- the delivery outbox exists, but no verified GPT receiver is deployed;
-- owner-confirmed accounting is available, but IBKR is not read automatically.
+- the delivery outbox exists, but no verified GPT receiver is deployed.
 
 ## Production blockers
 
-- `US-stock-daily-report` must be private because its old history is not safe for
-  public release;
+- `US-stock-daily-report` must remain private because its old history is not safe
+  for public release;
 - private configuration and databases must be outside Git and cloud sync;
 - one real dual-source accepted-close run must be persisted;
 - the opening ledger must be owner-attested and initialized;
+- one private IBKR Flex reconciliation must be executed and reviewed;
 - a receiver must prove stable idempotency or delivery lookup;
 - one same-day replay must prove no duplicate delivery;
 - exactly one recurring product-level daily task must be identified before
@@ -79,7 +96,7 @@ the fragility/copy-trade gate.
 
 ## Remaining roadmap
 
-- read-only IBKR Flex reconciliation;
+- private-runtime integration and one live trial for the tested IBKR Flex layer;
 - production White House/presidential-action and Polymarket adapters;
 - automated corporate-action evidence and adjustment workflow;
 - structured prediction/topic detail in a new private-report schema version;

@@ -50,27 +50,31 @@ advanced_models:
     implemented_existing_framework: true
     xiaohongshu_execution_weight: 0
     combined_social_score_cap: 0.05
+  ibkr_flex_readonly_reconciliation:
+    implemented_library: true
+    automatic_ledger_mutation: false
+    broker_order_capability: false
 operational_activation_gates:
   - repository_visibility_correct
   - private_config_outside_git_and_cloud_sync
   - accepted_close_live_trial_persisted
   - private_opening_attested_and_initialized
+  - ibkr_flex_private_live_reconciliation_verified
   - receiver_exactly_once_or_lookup_verified
   - exactly_one_daily_automation_target_verified
   - one_end_to_end_live_report_delivered_and_replayed_without_duplicate
 codex_handoff_order:
-  - fix operational repository visibility and role
   - complete one live accepted-close and private report trial
+  - connect the tested IBKR Flex adapter to the private ledger reconciliation queue
   - implement verified GPT receiver
-  - add read-only IBKR Flex reconciliation
   - merge legacy research outputs into the ledger-backed report
   - schedule prediction settlements
   - add production policy and Polymarket collectors
-  - add Windows CI and independent review
+  - add automated corporate-action reconciliation
 acceptance:
   commands:
-    - python -m compileall -q serenity_monitor/pro_research run_pro_daily.py
-    - pytest -q tests/test_pro_research_suite.py
+    - python -m compileall -q serenity_monitor/pro_research serenity_monitor/ibkr_flex.py run_pro_daily.py
+    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py
     - python run_pro_daily.py --config examples/pro_daily_config.example.yaml --out-dir out_pro_demo
   expected:
     - report_json_validates_schema
@@ -78,4 +82,5 @@ acceptance:
     - dca_is_non_executing
     - policy_and_social_cannot_independently_trade
     - polymarket_uses_only_pre_embargo_probability
+    - ibkr_flex_never_mutates_the_confirmed_ledger
     - public_examples_are_synthetic

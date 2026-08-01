@@ -14,6 +14,7 @@
 - objective volatility, credit and breadth downside overlay;
 - accepted-close consensus from Twelve Data and Alpha Vantage;
 - exchange calendar, confirmed/modeled ledger and owner-attested events;
+- read-only IBKR Flex v3 client, parser and broker/local reconciliation model;
 - versioned private daily-report contract, Markdown and immutable local outbox;
 - authorized Social Heat and append-only prediction research ledger;
 - institutional U.S. fund/product Skill and offline monitor;
@@ -37,14 +38,15 @@ persistence.
 - Trump and Polymarket overlays are bounded research inputs, not trade triggers;
 - modeled DCA is not broker-confirmed execution;
 - accepted-close validation is only one downstream settlement gate;
+- IBKR Flex reconciliation is read-only and never auto-mutates the ledger;
 - all automatic-execution fields are false;
 - private configuration and databases belong outside Git and cloud sync.
 
 ## Not yet production-complete
 
+- private live IBKR Flex credentials, statement persistence and runtime adapter;
 - verified GPT receiver and recurring private delivery;
-- read-only IBKR Flex reconciliation;
-- one persisted live end-to-end accepted-close/report/delivery trial;
+- one persisted live accepted-close/reconciliation/report/delivery trial;
 - production White House/Trump, Polymarket and authorized-social adapters;
 - automated corporate actions;
 - expanded volatility/overnight models and multi-period attribution/allocation.
