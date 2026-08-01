@@ -46,11 +46,13 @@ class ExchangeSessionResolver:
         "NYSE": "XNYS",
         "NASDAQ": "XNAS",
         "NYSEARCA": "ARCX",
+        "CBOEBZX": "BATS",
     }
     _MIC_TO_CALENDAR: Final[dict[str, str]] = {
         "XNYS": "XNYS",
         "XNAS": "XNYS",
         "ARCX": "XNYS",
+        "BATS": "XNYS",
     }
 
     def __init__(self) -> None:
@@ -148,6 +150,53 @@ class ExchangeSessionResolver:
         if close_at.tzinfo is None or close_at.utcoffset() is None:
             raise ExchangeSessionError("calendar returned a naive close timestamp")
         return close_at.astimezone(dt.timezone.utc)
+
+    def future_session_offsets(
+        self,
+        session: dt.date | str,
+        offsets: tuple[int, ...] | list[int] | range,
+        mic: str,
+    ) -> dict[int, dt.date]:
+        """Resolve positive trading-session offsets from one real session.
+
+        Offset ``1`` is the immediately following exchange session.  Calendar
+        labels, not civil-day arithmetic, determine every result.  The method
+        intentionally rejects duplicate, boolean, zero, and negative offsets
+        so callers cannot silently reinterpret a horizon contract.
+        """
+
+        anchor = self._session_date(session, field_name="session")
+        if isinstance(offsets, (str, bytes)):
+            raise ExchangeSessionError("offsets must be positive integers")
+        try:
+            supplied = tuple(offsets)
+        except TypeError as exc:
+            raise ExchangeSessionError("offsets must be an iterable of positive integers") from exc
+        if not supplied:
+            raise ExchangeSessionError("offsets may not be empty")
+        if any(isinstance(item, bool) or not isinstance(item, int) or item < 1 for item in supplied):
+            raise ExchangeSessionError("offsets must be positive integers")
+        if len(supplied) != len(set(supplied)):
+            raise ExchangeSessionError("offsets may not contain duplicates")
+
+        _, _, calendar = self._resolve_calendar(mic)
+        try:
+            if not calendar.is_session(anchor):
+                raise ExchangeSessionError("session must be an exchange session")
+            wanted = set(supplied)
+            resolved: dict[int, dt.date] = {}
+            cursor = anchor
+            for offset in range(1, max(supplied) + 1):
+                cursor = calendar.next_session(cursor)
+                if offset in wanted:
+                    resolved[offset] = cursor.date()
+        except ExchangeSessionError:
+            raise
+        except Exception as exc:
+            raise ExchangeSessionError(
+                "session offsets are outside the supported exchange-calendar range"
+            ) from exc
+        return {offset: resolved[offset] for offset in sorted(resolved)}
 
     def _resolve_calendar(self, mic: str) -> tuple[str, str, object]:
         supplied_mic = str(mic).strip().upper()

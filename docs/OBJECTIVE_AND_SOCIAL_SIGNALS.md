@@ -18,10 +18,10 @@ portfolio constraints and thesis hard gates
         |     +-- Nasdaq Golden Dragon China Index (HXC)
         |     +-- USD/CNH
         |
-        +-- research-only social attention
-              +-- Xiaohongshu
-              +-- X
-              +-- Reddit
+        +-- bounded social research group
+              +-- Xiaohongshu attention only
+              +-- X candidate score
+              +-- Reddit candidate score
 ```
 
 The objective overlay can only reduce the base regime's risk multiplier. It
@@ -82,9 +82,41 @@ persistence. Public CI does not upload or commit report artifacts.
 Xiaohongshu, X and Reddit belong to one `social_media` independence group.
 They cannot be counted as several independent confirmations of the same story.
 
-Public topic rules stop at generic themes and sectors. An ignored private
-portfolio configuration may add its own auditable asset mapping without
-placing the owner's strategy fingerprint in the framework repository:
+`serenity_monitor/social_heat.py` is an offline model boundary, not a
+collector. It accepts only authorized, already-sanitized observations with
+irreversible author/content identifiers and controlled topic taxonomy IDs. It
+does not accept post bodies, account handles, URLs or free-text topics and has
+no browser, login, cookie, API-reversal or scraping capability.
+
+The built-in Social Heat taxonomy is closed to `broad_market`,
+`crypto_assets`, `dividend_equity`, `nasdaq_100`, `semiconductors` and
+`sp_500`. Runtime policy may narrow that list but cannot add arbitrary labels;
+the separate ticker field is restricted to a canonical public-symbol shape.
+
+The model calculates author breadth and entropy, independent content count,
+30-day baseline growth, capped log engagement, sentiment and disagreement,
+topic concentration, advertising/duplicate/coordinated rates,
+cross-platform overlap, first-seen time, decay half-life, manipulation risk,
+coverage and quarantine state. Missing or unhealthy platforms are omitted;
+they are not converted into neutral sentiment.
+
+Attention and candidate execution-score weights are separate. Healthy sources
+are re-normalized inside each layer using the provisional priors below:
+
+| Platform | Attention prior | Initial candidate execution eligibility |
+|---|---:|---:|
+| Xiaohongshu | 40% | 0% |
+| X | 35% | Eligible inside the bounded social group |
+| Reddit | 15% | Eligible inside the bounded social group |
+| Other authorized source | 10% | Eligible inside the bounded social group |
+
+Xiaohongshu is excluded from the execution-weight denominator, so its presence
+cannot dilute or amplify X/Reddit execution contribution. It can still change
+research attention, crowding flags and investigation priority.
+
+The legacy authorized-file `china_retail_attention` mapper may keep an ignored
+private keyword-to-asset mapping without placing the owner's strategy
+fingerprint in the framework repository:
 
 ```yaml
 china_retail_attention:
@@ -98,17 +130,28 @@ china_retail_attention:
 ```
 
 Unknown keys, scalar keyword lists and invalid confidence values fail closed.
+Before this legacy output enters Social Heat, the private adapter must translate
+it to one of the closed generic taxonomy IDs above; private free-text labels do
+not cross the model boundary.
 
 ### Weight boundary
 
-- Current status: `research_only`.
-- Current execution weight: `0`.
-- It cannot trigger `OPEN`, `ADD`, `TRIM` or `EXIT`.
+- Every social output remains `research_only` and cannot independently trigger
+  `OPEN`, `ADD`, `TRIM`, `EXIT` or an increased DCA amount.
+- Xiaohongshu candidate execution weight is hard-coded to `0`.
+- The combined social contribution is hard-capped at 5% of the decision score.
+- Advertising, duplicate/coordinated activity, inconsistent cross-platform
+  clusters, future observations and missing rights fail closed or quarantine
+  the affected source.
+- The default manipulation quarantine threshold is 0.60. Runtime policy may
+  tighten it but cannot raise it.
 - After at least 252 valid trading days and embargoed walk-forward validation,
   the candidate cap is 1%-2% of the model decision score.
-- If any social signals are later promoted, the entire social-media group must
-  remain capped at 5% of the decision score.
 - These are model-score weights, never direct portfolio weights.
+
+The current implementation stops at deterministic model output. Authorized
+X/Reddit/Xiaohongshu ingestion, private history storage and the adapter into the
+ledger-backed daily report remain separate deployment work.
 
 ## China/ADR confirmation
 
@@ -124,13 +167,21 @@ revenue.
 
 - Preserve the timestamp when information first became observable; do not
   backfill final engagement counts.
-- Test 1-, 5- and 20-day sector/factor-residual returns, not raw returns only.
+- Test 1-, 5-, 20- and 60-session raw and factor-residual returns.
 - Compare the base model against base-plus-overlay in embargoed walk-forward
   tests.
 - Report incremental Rank IC, calibration, turnover, trading costs, maximum
   drawdown and stability by market regime.
 - Automatically quarantine a signal when rolling efficacy turns negative,
   coverage collapses or the input distribution shifts materially.
+
+`serenity_monitor/prediction_ledger.py` implements the private local research
+ledger for these tests. It stores sanitized signal metadata in an append-only
+SQLite hash chain, settles against accepted-close lineage, calculates raw and
+residual returns, hit rate, MFE, MAE, Brier score and Rank IC, and returns
+`active`, `decayed`, `quarantined` or `research_only` weight state. Reversals
+are new immutable events. The module has no broker, order or trade interface.
+See [Prediction Ledger](PREDICTION_LEDGER.md).
 
 ## Preferred primary references
 

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import io
+import os
+import subprocess
+import sys
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 import pytest
 
 from serenity_monitor import private_runtime_cli
 from serenity_monitor.private_runtime_config import PrivateRuntimeConfigError
 from serenity_monitor.private_runtime_paths import PrivateRuntimePathError
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _capture(callable_):
@@ -86,3 +93,30 @@ def test_initialize_entrypoint_uses_same_fixed_privacy_boundary() -> None:
     assert code == private_runtime_cli.EXIT_CONFIG_OR_PRIVACY
     assert stdout == ""
     assert stderr == "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ["initialize_private_daily.py", "run_private_daily.py"],
+)
+def test_direct_script_entrypoint_imports_package_and_emits_only_fixed_error(
+    tmp_path: Path,
+    script_name: str,
+) -> None:
+    environment = os.environ.copy()
+    environment.pop("SERENITY_PRIVATE_CONFIG", None)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / script_name)],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == private_runtime_cli.EXIT_CONFIG_OR_PRIVACY
+    assert result.stdout == ""
+    assert result.stderr == "PRIVATE_DAILY_RUNTIME:CONFIG_OR_PRIVACY_REJECTED\n"
+    assert "Traceback" not in result.stderr
+    assert str(ROOT) not in result.stderr
