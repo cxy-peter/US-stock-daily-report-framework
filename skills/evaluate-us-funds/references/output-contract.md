@@ -42,6 +42,20 @@ Do not average these states into a number. A product-quality `PASS` can still ha
 
 Precedence rule: if a verified hard mismatch cannot be reversed by any missing fact, return `REJECT` even when other information is missing. Use `NEED_INFO` when the missing fact could materially change the requested decision.
 
+### Runtime-monitor extension
+
+The deterministic scheduled monitor may additionally return `NOT_DUE`. This is
+a cadence state only and is not available as a full due-diligence or
+investment-committee verdict. When one monitoring dimension passes and the
+other is not due, the combined status remains `NOT_DUE` and `summary_code` must
+be `fund_monitor.overall.partial_not_due`; never present the partial result as
+an overall `PASS`.
+
+A machine-readable monitoring update should also preserve
+`triggered_event_keys`, the per-category freshness cutoffs, missing/stale/
+degraded coverage, and the next due time. Acknowledge an event key only after
+the exact event review is durably recorded. See `runtime-monitoring.md`.
+
 ## 3. Confidence model
 
 Report `HIGH`, `MEDIUM`, or `LOW` confidence based on evidence coverage and agreement:

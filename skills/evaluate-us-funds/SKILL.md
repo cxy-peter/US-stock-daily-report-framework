@@ -24,6 +24,7 @@ Also read:
 
 - `references/us-product-branches.md` for any U.S. fund or ETP. After confirming legal structure, apply every relevant structure, strategy, tax, and trading branch in the prescribed order.
 - `references/source-map.md` when explaining provenance, refreshing the framework, or tracing a rule back to cited broker research, official sources, or academic research.
+- `references/runtime-monitoring.md` for a scheduled monitoring update, an event-triggered review, or when wiring the Skill to the deterministic fund-monitor module.
 
 Use `assets/strategy-profile.yaml` as the editable schema when no strategy profile exists. Build a temporary in-memory profile for read-only questions. Copy it into the user's working directory only when the user asks to persist/customize a profile or the task otherwise authorizes that file write. Do not overwrite the installed template unless the user explicitly asks to change the reusable default.
 
@@ -176,6 +177,15 @@ If sizing inputs are incomplete, set `approved_weight_range: UNKNOWN`. A scenari
 Use a four-stage governance path: `BASIC_POOL -> PREFERRED_POOL -> INVESTMENT_POOL`, with `WATCH_POOL` for exceptions and deterioration. Re-evaluate on both schedule and event triggers. Manager departure, process change, style drift, capacity/liquidity deterioration, abnormal premium/discount, leverage or distribution-policy change, thesis failure, and risk-limit breach all require review.
 
 Performance disappointment alone is not an exit rule; diagnose whether the original thesis is intact. Performance success alone is not evidence that a broken process should remain approved.
+
+For scheduled or event-triggered updates, follow
+`references/runtime-monitoring.md`. Build `FundSource`, `FundEvidence`,
+`FundMetric`, `LastCompleted`, and `FundMonitorRequest` only from current,
+privacy-minimized evidence, then call `monitor_fund()`. Treat `NOT_DUE` as a
+runtime cadence state, not an approval verdict. Persist returned
+`triggered_event_keys` only after the exact event review is durably recorded.
+The monitor cannot fetch data, fill evidence gaps, alter a holding or change a
+DCA plan.
 
 ## Updating this skill
 
