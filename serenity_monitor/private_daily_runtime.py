@@ -15,6 +15,18 @@ from typing import Any, Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from .daily_outbox import DailyReportOutbox
+from .opening_owner_attestation import (
+    OpeningLedgerBinding,
+    OpeningOwnerAttestationError,
+    audit_opening_owner_attestation,
+    opening_ledger_idempotency_key,
+    publish_opening_intent,
+    publish_opening_receipt,
+    recover_opening_control_publications,
+    require_opening_ledger_pristine,
+    require_opening_outbox_pristine,
+    validate_opening_commit_time,
+)
 from .portfolio_ledger import (
     CommonLedgerValuation,
     DcaFillReceipt,
@@ -161,6 +173,16 @@ def _verify_opening_matches_config(
         or checkpoint.positions != expected_positions
     ):
         raise PrivateDailyIntegrityError("opening_checkpoint_configuration_mismatch")
+
+
+def _opening_binding(ledger: PortfolioLedger) -> OpeningLedgerBinding:
+    checkpoint = ledger.opening_checkpoint()
+    return OpeningLedgerBinding(
+        opening_event_id=checkpoint.opening_event_id,
+        opening_event_hash=checkpoint.opening_event_hash,
+        idempotency_key=checkpoint.idempotency_key,
+        created_at=checkpoint.created_at,
+    )
 
 
 def _instrument_universe(
@@ -594,21 +616,77 @@ def _base_actions(report_status: str, reason_codes: Sequence[str]) -> list[dict[
 def initialize_private_ledger(
     config: PrivateDailyRuntimeConfig,
     *,
-    ledger: PortfolioLedger,
+    runtime_paths: PrivateRuntimePaths,
+    config_bytes_sha256: str,
+    ledger: PortfolioLedger | None,
     close_registry: ProviderRegistry,
     calendar: ExchangeSessionResolver,
-    as_of: dt.datetime,
+    clock: Clock,
+    ledger_factory: Callable[[], PortfolioLedger] | None = None,
 ) -> PrivateLedgerInitializationResult:
-    """Explicitly establish the immutable opening snapshot and two valuations."""
+    """Consume the owner claim, bind it to the opening event, then value it."""
 
-    observed_at = _aware_utc(as_of, "as_of")
-    existing = True
+    observed_at = _aware_utc(clock(), "clock")
     try:
-        _verify_opening_matches_config(config, ledger)
-    except LedgerNotInitializedError:
+        recover_opening_control_publications(runtime_paths)
+    except OpeningOwnerAttestationError as exc:
+        raise PrivateDailyIntegrityError(
+            "opening_attestation_publication_recovery_failed"
+        ) from exc
+    existing = True
+    binding: OpeningLedgerBinding | None = None
+    if ledger is None:
         existing = False
-    except LedgerAlreadyInitializedError as exc:  # pragma: no cover - defensive alias
-        raise PrivateDailyIntegrityError("opening_checkpoint_invalid") from exc
+    else:
+        try:
+            _verify_opening_matches_config(config, ledger)
+            binding = _opening_binding(ledger)
+        except LedgerNotInitializedError:
+            existing = False
+        except LedgerAlreadyInitializedError as exc:  # pragma: no cover - defensive alias
+            raise PrivateDailyIntegrityError("opening_checkpoint_invalid") from exc
+
+    try:
+        attestation = audit_opening_owner_attestation(
+            config,
+            runtime_paths,
+            config_bytes_sha256=config_bytes_sha256,
+            now=observed_at,
+            ledger_binding=binding,
+        )
+    except OpeningOwnerAttestationError as exc:
+        raise PrivateDailyIntegrityError("opening_owner_attestation_invalid") from exc
+
+    if existing:
+        if ledger is None:  # pragma: no cover - state invariant
+            raise PrivateDailyIntegrityError("opening_ledger_missing")
+        if attestation.state == "recovery_available":
+            if attestation.claim is None or attestation.intent is None or binding is None:
+                raise PrivateDailyIntegrityError("opening_attestation_recovery_invalid")
+            try:
+                publish_opening_receipt(
+                    attestation.claim,
+                    attestation.intent,
+                    binding,
+                    runtime_paths,
+                    clock=clock,
+                )
+            except OpeningOwnerAttestationError as exc:
+                raise PrivateDailyIntegrityError(
+                    "opening_attestation_receipt_recovery_failed"
+                ) from exc
+        elif attestation.state != "consumed_verified":
+            raise PrivateDailyIntegrityError("opening_owner_attestation_not_consumed")
+    elif attestation.state not in {"pending_verified", "resume_available"} or attestation.claim is None:
+        raise PrivateDailyIntegrityError("opening_owner_attestation_not_pending")
+
+    if not existing:
+        try:
+            require_opening_outbox_pristine(runtime_paths)
+        except OpeningOwnerAttestationError as exc:
+            raise PrivateDailyIntegrityError(
+                "opening_initialization_outbox_not_pristine"
+            ) from exc
 
     if existing:
         confirmed_existing = ledger.valuation_at("confirmed", config.opening.session)
@@ -647,11 +725,79 @@ def initialize_private_ledger(
         raise PrivateDailyRuntimeError("opening_corporate_action_gate_blocked")
 
     if not existing:
-        ledger.initialize(
-            config.opening.session,
-            config.opening.cash,
-            config.opening.positions,
-        )
+        try:
+            if ledger is None:
+                if ledger_factory is None:
+                    raise PrivateDailyIntegrityError("opening_ledger_factory_missing")
+                ledger = ledger_factory()
+            require_opening_ledger_pristine(runtime_paths)
+            require_opening_outbox_pristine(runtime_paths)
+            try:
+                ledger.opening_checkpoint()
+            except LedgerNotInitializedError:
+                pass
+            else:
+                raise PrivateDailyIntegrityError(
+                    "opening_ledger_changed_during_initialization"
+                )
+
+            # Re-check the claim after schema creation and before durable intent.
+            current = audit_opening_owner_attestation(
+                config,
+                runtime_paths,
+                config_bytes_sha256=config_bytes_sha256,
+                now=_aware_utc(clock(), "clock"),
+                ledger_binding=None,
+            )
+            if current.state not in {"pending_verified", "resume_available"} or current.claim is None:
+                raise PrivateDailyIntegrityError("opening_owner_attestation_not_pending")
+            if current.state == "resume_available":
+                if current.intent is None:
+                    raise PrivateDailyIntegrityError(
+                        "opening_attestation_resume_intent_missing"
+                    )
+                intent = current.intent
+                recorded_at = validate_opening_commit_time(
+                    current.claim,
+                    intent,
+                    _aware_utc(clock(), "clock"),
+                )
+            else:
+                intent = publish_opening_intent(
+                    current.claim,
+                    runtime_paths,
+                    clock=clock,
+                )
+                recorded_at = validate_opening_commit_time(
+                    current.claim,
+                    intent,
+                    _aware_utc(clock(), "clock"),
+                )
+            ledger.initialize(
+                config.opening.session,
+                config.opening.cash,
+                config.opening.positions,
+                idempotency_key=opening_ledger_idempotency_key(
+                    current.claim,
+                    intent,
+                ),
+                recorded_at=recorded_at,
+            )
+            _verify_opening_matches_config(config, ledger)
+            binding = _opening_binding(ledger)
+            publish_opening_receipt(
+                current.claim,
+                intent,
+                binding,
+                runtime_paths,
+                clock=clock,
+            )
+        except OpeningOwnerAttestationError as exc:
+            raise PrivateDailyIntegrityError(
+                "opening_owner_attestation_commit_failed"
+            ) from exc
+    if ledger is None:  # pragma: no cover - state invariant
+        raise PrivateDailyIntegrityError("opening_ledger_missing")
     _verify_opening_matches_config(config, ledger)
     confirmed = ledger.record_valuation("confirmed", batch)
     modeled = ledger.record_valuation("modeled", batch)
@@ -677,6 +823,7 @@ class PrivateDailyRuntime:
         report_directory: str | Path,
         clock: Clock,
         runtime_paths: PrivateRuntimePaths | None = None,
+        config_bytes_sha256: str | None = None,
     ) -> None:
         self.config = config
         self.calendar = calendar
@@ -686,6 +833,7 @@ class PrivateDailyRuntime:
         self.report_directory = Path(report_directory)
         self.clock = clock
         self.runtime_paths = runtime_paths
+        self.config_bytes_sha256 = config_bytes_sha256
 
     def prepare(
         self,
@@ -703,12 +851,49 @@ class PrivateDailyRuntime:
         report_zone = ZoneInfo(self.config.report_timezone)
         delivery_date = started_at.astimezone(report_zone).date()
 
+        try:
+            _verify_opening_matches_config(self.config, self.ledger)
+            if not self.config.simulation:
+                if self.runtime_paths is None or self.config_bytes_sha256 is None:
+                    raise PrivateDailyIntegrityError(
+                        "opening_attestation_runtime_boundary_missing"
+                    )
+                opening_audit = audit_opening_owner_attestation(
+                    self.config,
+                    self.runtime_paths,
+                    config_bytes_sha256=self.config_bytes_sha256,
+                    now=started_at,
+                    ledger_binding=_opening_binding(self.ledger),
+                )
+                if opening_audit.state != "consumed_verified":
+                    raise PrivateDailyIntegrityError(
+                        "opening_owner_attestation_not_consumed"
+                    )
+            common_before = self.ledger.latest_common_valuation()
+        except OpeningOwnerAttestationError as exc:
+            raise PrivateDailyIntegrityError(
+                "opening_owner_attestation_invalid"
+            ) from exc
+        except LedgerNotInitializedError as exc:
+            raise PrivateDailyNotInitialized("private_ledger_not_initialized") from exc
+        if common_before is None:
+            raise PrivateDailyNotInitialized("opening_valuations_not_initialized")
+
         same_day = self.outbox.find_slot(
             target_key,
             self.config.delivery_channel,
             delivery_date,
         )
         if same_day is not None:
+            if (
+                same_day.ledger_last_event_hash is None
+                or not self.ledger.contains_event_hash(
+                    same_day.ledger_last_event_hash
+                )
+            ):
+                raise PrivateDailyIntegrityError(
+                    "same_day_report_not_in_current_ledger_chain"
+                )
             content = self.outbox.load_validated_content(same_day.delivery_id)
             files = persist_private_daily_report(
                 content.report,
@@ -731,6 +916,15 @@ class PrivateDailyRuntime:
             before_delivery_date=delivery_date,
         )
         if pending is not None:
+            if (
+                pending.ledger_last_event_hash is None
+                or not self.ledger.contains_event_hash(
+                    pending.ledger_last_event_hash
+                )
+            ):
+                raise PrivateDailyIntegrityError(
+                    "pending_report_not_in_current_ledger_chain"
+                )
             return PrivateDailyRunResult(
                 status="pending_prior_delivery",
                 report_status=None,
@@ -753,14 +947,6 @@ class PrivateDailyRuntime:
                 raise PrivateDailyRuntimeError("research_snapshot_invalid") from exc
             research_document = research_projection.research
             research_source_health = research_projection.source_health
-
-        try:
-            _verify_opening_matches_config(self.config, self.ledger)
-            common_before = self.ledger.latest_common_valuation()
-        except LedgerNotInitializedError as exc:
-            raise PrivateDailyNotInitialized("private_ledger_not_initialized") from exc
-        if common_before is None:
-            raise PrivateDailyNotInitialized("opening_valuations_not_initialized")
 
         delivered = self.outbox.latest_delivered_checkpoint(
             target_key,

@@ -244,7 +244,21 @@ Prepared/retryable delivery is intentionally independent of market-data and
 ledger readiness. See `docs/PRIVATE_DAILY_ACTIVATION.md` for the fixed contract
 and the gates that still prevent recurring activation.
 
-Initialize the opening snapshot and both opening valuations explicitly once:
+After reviewing the owner-only opening snapshot, create its one-time interactive
+claim from a real terminal. Pipes, redirected input and unattended flags are
+rejected:
+
+```bash
+python scripts/attest_private_opening.py
+```
+
+The claim contains hashes and timestamps only, remains private, and expires in
+30 minutes. A durable intent can resume an interrupted commit only inside that
+same window; afterward the attestation command requires a new terminal
+confirmation before initialization can continue. Run the read-only readiness
+command again; when it reports
+`operational_state=needs_initialization`, initialize the opening snapshot and
+both opening valuations explicitly once:
 
 ```bash
 python scripts/initialize_private_daily.py
@@ -256,11 +270,18 @@ Then prepare one private report/outbox item after the official close:
 python scripts/run_private_daily.py
 ```
 
-Both commands accept no CLI arguments. Normal stdout is empty; failures emit
-only a fixed error code, never a path, target, holding, amount, credential or
-traceback. The daily command does not create owner-confirmed fills: if the
-owner reports no trade, the ledger records no manual event and only the fixed
-base DCA plan is modeled at accepted closes.
+All three commands accept no CLI arguments. Normal stdout is empty; failures
+emit only a fixed error code, never a path, target, holding, amount, credential
+or traceback. The attestation command prints only a random challenge, fixed
+instructions and a fixed success marker to its terminal. The daily command
+does not create owner-confirmed fills: if the owner reports no trade, the
+ledger records no manual event and only the fixed base DCA plan is modeled at
+accepted closes.
+
+The opening initializer is deliberately not source-compatible with the older
+unattested helper call: its internal Python API now requires the validated
+runtime paths, exact configuration-byte digest and an aware clock. Operators
+should use the guarded script rather than call that internal function.
 
 `serenity_monitor/private_research_adapter.py` is the no-I/O bridge for
 already-computed `FundMonitorResult` and `SocialHeatResult` aggregates. The

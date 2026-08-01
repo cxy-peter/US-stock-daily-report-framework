@@ -70,6 +70,24 @@ class PrivateRuntimePaths:
     report_directory: Path
     lock_file: Path
 
+    @property
+    def opening_claim_file(self) -> Path:
+        """Fixed owner-presence claim path with no private value in its name."""
+
+        return self.root / "opening-owner-attestation.claim.json"
+
+    @property
+    def opening_intent_file(self) -> Path:
+        """Fixed pre-commit intent path for the opening transaction."""
+
+        return self.root / "opening-owner-attestation.intent.json"
+
+    @property
+    def opening_receipt_file(self) -> Path:
+        """Fixed post-commit receipt path bound to the opening event."""
+
+        return self.root / "opening-owner-attestation.receipt.json"
+
 
 def _normalized_component(value: str) -> str:
     return "".join(character for character in value.casefold() if character.isalnum())

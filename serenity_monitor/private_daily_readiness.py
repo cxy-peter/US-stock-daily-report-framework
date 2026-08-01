@@ -26,6 +26,10 @@ from .daily_outbox import (
     DailyReportOutbox,
     DeliveryAdapterCapabilities,
 )
+from .opening_owner_attestation import (
+    OpeningLedgerBinding,
+    audit_opening_owner_attestation,
+)
 from .portfolio_ledger import (
     LedgerNotInitializedError,
     OpeningPosition,
@@ -262,10 +266,15 @@ class _LedgerAudit:
     state: str
     latest_common_session: dt.date | None
     active_symbols: tuple[str, ...]
+    opening_binding: OpeningLedgerBinding | None = None
 
     def __post_init__(self) -> None:
         if self.state not in _LEDGER_STATES:
             raise PrivateDailyReadinessError("ledger_audit_state_invalid")
+        if self.state in {"opening_only", "ready"} and self.opening_binding is None:
+            raise PrivateDailyReadinessError("ledger_opening_binding_missing")
+        if self.state not in {"opening_only", "ready"} and self.opening_binding is not None:
+            raise PrivateDailyReadinessError("ledger_opening_binding_unexpected")
 
 
 @dataclass(frozen=True, repr=False)
@@ -294,6 +303,16 @@ def _utc_now(clock) -> dt.datetime:
     ):
         raise PrivateDailyReadinessError("readiness_clock_invalid")
     return value.astimezone(dt.timezone.utc)
+
+
+def _parse_readonly_utc(value: object) -> dt.datetime:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PrivateDailyReadinessError("ledger_opening_time_invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise PrivateDailyReadinessError("ledger_opening_time_invalid")
+    return parsed.astimezone(dt.timezone.utc)
 
 
 def _check(check_id: str, status: str, reason_code: str) -> ReadinessCheck:
@@ -501,7 +520,7 @@ def _audit_ledger_readonly(
             try:
                 opening_row = ledger._require_initialized(connection)
             except LedgerNotInitializedError:
-                return _LedgerAudit("not_initialized", None, ())
+                return _LedgerAudit("not_initialized", None, (), None)
             ledger._validated_valuation_chains_connection(connection)
             session, currency, cash, positions = _opening_from_row(opening_row)
             expected_positions = tuple(
@@ -534,6 +553,12 @@ def _audit_ledger_readonly(
                 "ready" if latest is not None else "opening_only",
                 latest,
                 tuple(sorted(symbols)),
+                OpeningLedgerBinding(
+                    opening_event_id=str(opening_row["event_id"]),
+                    opening_event_hash=str(opening_row["event_hash"]),
+                    idempotency_key=str(opening_row["idempotency_key"]),
+                    created_at=_parse_readonly_utc(opening_row["created_at"]),
+                ),
             )
     except PrivateDailyReadinessError:
         raise
@@ -629,6 +654,7 @@ def evaluate_private_daily_readiness(
     environ: Mapping[str, str],
     clock,
     config_acl_passed: bool,
+    config_bytes_sha256: str | None = None,
     receiver_capabilities: DeliveryAdapterCapabilities | None = None,
 ) -> PrivateDailyActivationReadiness:
     """Evaluate current activation gates without network or filesystem writes."""
@@ -782,6 +808,41 @@ def evaluate_private_daily_readiness(
         checks["ledger_integrity"] = _check(
             "ledger_integrity", "blocked", "ledger_storage_unavailable"
         )
+
+    opening_attestation_state = "unsafe"
+    if not storage_ok or ledger_audit.state == "blocked":
+        checks["opening_owner_attestation"] = _check(
+            "opening_owner_attestation",
+            "blocked",
+            "opening_owner_attestation_storage_or_ledger_unavailable",
+        )
+    else:
+        try:
+            opening_audit = audit_opening_owner_attestation(
+                config,
+                paths,
+                config_bytes_sha256=config_bytes_sha256 or "",
+                now=now,
+                ledger_binding=ledger_audit.opening_binding,
+            )
+            opening_attestation_state = opening_audit.state
+            passed = opening_audit.state in {
+                "consumed_verified",
+                "pending_verified",
+                "recovery_available",
+                "resume_available",
+            }
+            checks["opening_owner_attestation"] = _check(
+                "opening_owner_attestation",
+                "passed" if passed else "blocked",
+                opening_audit.reason_code,
+            )
+        except Exception:
+            checks["opening_owner_attestation"] = _check(
+                "opening_owner_attestation",
+                "blocked",
+                "opening_owner_attestation_audit_failed",
+            )
 
     outbox_state = "blocked"
     outbox_audit: _OutboxAudit | None = None
@@ -973,7 +1034,6 @@ def evaluate_private_daily_readiness(
         "config_acl",
         "corporate_action_coverage",
         "delivery_target",
-        "opening_owner_attestation",
         "outbox_integrity",
         "provider_call_budget",
         "provider_credentials",
@@ -1016,12 +1076,30 @@ def evaluate_private_daily_readiness(
         "unresolved_delivery",
     }
     ready_for_initialize = (
-        ledger_audit.state in {"missing", "not_initialized", "opening_only"}
+        (
+            (
+                opening_attestation_state == "pending_verified"
+                and ledger_audit.state in {"missing", "not_initialized"}
+            )
+            or (
+                opening_attestation_state == "recovery_available"
+                and ledger_audit.state in {"opening_only", "ready"}
+            )
+            or (
+                opening_attestation_state == "resume_available"
+                and ledger_audit.state in {"missing", "not_initialized"}
+            )
+            or (
+                opening_attestation_state == "consumed_verified"
+                and ledger_audit.state == "opening_only"
+            )
+        )
         and outbox_state == "empty"
         and _all_passed(checks, initialize_requirements)
     )
     ready_for_prepare = (
         ledger_audit.state == "ready"
+        and opening_attestation_state == "consumed_verified"
         and outbox_state == "empty"
         and _all_passed(checks, prepare_requirements)
     )
@@ -1031,6 +1109,7 @@ def evaluate_private_daily_readiness(
     )
     workflow_activation_allowed = (
         ledger_audit.state == "ready"
+        and opening_attestation_state == "consumed_verified"
         and outbox_state in {"already_complete", "empty"}
         and _all_passed(checks, activation_requirements)
     )
@@ -1098,8 +1177,8 @@ def _blocked_contract(now: dt.datetime, reason_code: str) -> PrivateDailyActivat
     )
     checks["opening_owner_attestation"] = _check(
         "opening_owner_attestation",
-        "not_implemented",
-        "opening_owner_attestation_not_implemented",
+        "not_run",
+        "opening_owner_attestation_not_run",
     )
     checks["receiver_idempotency"] = _check(
         "receiver_idempotency",
@@ -1143,6 +1222,7 @@ def run_private_daily_readiness_main(
             allow_synthetic=False,
             _validated_bytes=payload,
         )
+        config_bytes_sha256 = hashlib.sha256(payload).hexdigest()
         paths = resolve_private_runtime_paths(config, environment)
         result = evaluate_private_daily_readiness(
             config,
@@ -1150,6 +1230,7 @@ def run_private_daily_readiness_main(
             environ=environment,
             clock=lambda: now,
             config_acl_passed=True,
+            config_bytes_sha256=config_bytes_sha256,
         )
     except Exception:
         result = _blocked_contract(now, "private_config_or_path_blocked")

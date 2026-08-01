@@ -2,14 +2,26 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 import sys
 import warnings
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, TextIO
 
 from .daily_outbox import DailyOutboxError, DailyReportOutbox
-from .portfolio_ledger import PortfolioLedger, PortfolioLedgerError
+from .opening_owner_attestation import (
+    OpeningLedgerBinding,
+    OpeningOwnerAttestationError,
+    audit_opening_owner_attestation,
+    create_opening_owner_claim,
+    interactive_owner_presence,
+)
+from .portfolio_ledger import (
+    LedgerNotInitializedError,
+    PortfolioLedger,
+    PortfolioLedgerError,
+)
 from .private_daily_report import PrivateDailyReportError
 from .private_daily_runtime import (
     PrivateDailyIntegrityError,
@@ -68,6 +80,15 @@ _ERROR_LINES = {
     EXIT_INTERRUPTED: "PRIVATE_DAILY_RUNTIME:INTERRUPTED",
 }
 
+_ATTESTATION_ERROR_LINES = {
+    EXIT_BUSY: "PRIVATE_OPENING_ATTESTATION:BUSY",
+    EXIT_CONFIG_OR_PRIVACY: "PRIVATE_OPENING_ATTESTATION:CONFIG_OR_PRIVACY_REJECTED",
+    EXIT_INTEGRITY: "PRIVATE_OPENING_ATTESTATION:INTEGRITY_REJECTED",
+    EXIT_PERSISTENCE: "PRIVATE_OPENING_ATTESTATION:PERSISTENCE_FAILED",
+    EXIT_INTERNAL: "PRIVATE_OPENING_ATTESTATION:INTERNAL_FAILURE",
+    EXIT_INTERRUPTED: "PRIVATE_OPENING_ATTESTATION:INTERRUPTED",
+}
+
 
 def _clock() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -80,15 +101,21 @@ def _fixed_error(exit_code: int) -> int:
 
 
 def _load_live_config(environ: Mapping[str, str]):
+    config, _digest = _load_live_config_bundle(environ)
+    return config
+
+
+def _load_live_config_bundle(environ: Mapping[str, str]):
     raw_path = str(environ.get(PRIVATE_CONFIG_ENV, "")).strip()
     if not raw_path:
         raise PrivateRuntimePathError("private_configuration_environment_missing")
     config_path, payload = read_validated_live_private_config(Path(raw_path))
-    return load_private_daily_runtime_config(
+    config = load_private_daily_runtime_config(
         config_path,
         allow_synthetic=False,
         _validated_bytes=payload,
     )
+    return config, hashlib.sha256(payload).hexdigest()
 
 
 def _registry(config, environ: Mapping[str, str], clock):
@@ -114,6 +141,8 @@ def _map_exception(exc: BaseException) -> int:
         return EXIT_BUSY
     if isinstance(exc, (PrivateRuntimeConfigError, PrivateRuntimePathError)):
         return EXIT_CONFIG_OR_PRIVACY
+    if isinstance(exc, OpeningOwnerAttestationError):
+        return EXIT_INTEGRITY
     if isinstance(exc, PrivateDailyNotInitialized):
         return EXIT_NOT_INITIALIZED
     if isinstance(
@@ -149,17 +178,45 @@ def run_private_daily_main(
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            config = _load_live_config(environment)
+            config, config_bytes_sha256 = _load_live_config_bundle(environment)
             paths = resolve_private_runtime_paths(config, environment)
             target_key = require_delivery_target(config, environment)
             ensure_private_storage(paths)
             with private_runtime_lock(paths.lock_file):
+                if not os.path.lexists(str(paths.ledger_database)):
+                    raise PrivateDailyNotInitialized("private_ledger_not_initialized")
                 calendar = ExchangeSessionResolver()
                 ledger = PortfolioLedger(
                     paths.ledger_database,
                     policy=config.ledger_policy,
                     calendar_resolver=calendar,
                 )
+                try:
+                    checkpoint = ledger.opening_checkpoint()
+                except LedgerNotInitializedError as exc:
+                    raise PrivateDailyNotInitialized(
+                        "private_ledger_not_initialized"
+                    ) from exc
+                opening_audit = audit_opening_owner_attestation(
+                    config,
+                    paths,
+                    config_bytes_sha256=config_bytes_sha256,
+                    now=_clock(),
+                    ledger_binding=OpeningLedgerBinding(
+                        opening_event_id=checkpoint.opening_event_id,
+                        opening_event_hash=checkpoint.opening_event_hash,
+                        idempotency_key=checkpoint.idempotency_key,
+                        created_at=checkpoint.created_at,
+                    ),
+                )
+                if opening_audit.state != "consumed_verified":
+                    raise PrivateDailyIntegrityError(
+                        "opening_owner_attestation_not_consumed"
+                    )
+                if ledger.latest_common_valuation() is None:
+                    raise PrivateDailyNotInitialized(
+                        "opening_valuations_not_initialized"
+                    )
                 outbox = DailyReportOutbox(paths.outbox_database)
                 runtime = PrivateDailyRuntime(
                     config,
@@ -170,6 +227,7 @@ def run_private_daily_main(
                     report_directory=paths.report_directory,
                     clock=_clock,
                     runtime_paths=paths,
+                    config_bytes_sha256=config_bytes_sha256,
                 )
                 missing = missing_provider_environment(environment)
                 result = runtime.prepare(
@@ -196,29 +254,80 @@ def initialize_private_daily_main(
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            config = _load_live_config(environment)
+            config, config_bytes_sha256 = _load_live_config_bundle(environment)
             paths = resolve_private_runtime_paths(config, environment)
             if missing_provider_environment(environment):
                 return _fixed_error(EXIT_NOT_INITIALIZED)
             ensure_private_storage(paths)
             with private_runtime_lock(paths.lock_file):
                 calendar = ExchangeSessionResolver()
-                ledger = PortfolioLedger(
-                    paths.ledger_database,
-                    policy=config.ledger_policy,
-                    calendar_resolver=calendar,
+                def ledger_factory() -> PortfolioLedger:
+                    return PortfolioLedger(
+                        paths.ledger_database,
+                        policy=config.ledger_policy,
+                        calendar_resolver=calendar,
+                    )
+
+                ledger = (
+                    ledger_factory()
+                    if os.path.lexists(str(paths.ledger_database))
+                    else None
                 )
                 initialize_private_ledger(
                     config,
+                    runtime_paths=paths,
+                    config_bytes_sha256=config_bytes_sha256,
                     ledger=ledger,
+                    ledger_factory=ledger_factory,
                     close_registry=_registry(config, environment, _clock),
                     calendar=calendar,
-                    as_of=_clock(),
+                    clock=_clock,
                 )
                 _tighten_runtime_files(paths)
             return EXIT_OK
     except BaseException as exc:
         return _fixed_error(_map_exception(exc))
+
+
+def attest_private_opening_main(
+    *,
+    environ: Mapping[str, str] | None = None,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> int:
+    """Create the one-time opening proof; never called by the daily job."""
+
+    environment = os.environ if environ is None else environ
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            config, config_bytes_sha256 = _load_live_config_bundle(environment)
+            paths = resolve_private_runtime_paths(config, environment)
+            owner_output = sys.stderr if output_stream is None else output_stream
+            owner_presence = interactive_owner_presence(
+                sys.stdin if input_stream is None else input_stream,
+                owner_output,
+            )
+            ensure_private_storage(paths)
+            with private_runtime_lock(paths.lock_file):
+                create_opening_owner_claim(
+                    config,
+                    paths,
+                    config_bytes_sha256=config_bytes_sha256,
+                    owner_presence=owner_presence,
+                    clock=_clock,
+                )
+            owner_output.write("PRIVATE_OPENING_ATTESTATION:RECORDED\n")
+            owner_output.flush()
+            return EXIT_OK
+    except BaseException as exc:
+        code = _map_exception(exc)
+        line = _ATTESTATION_ERROR_LINES.get(
+            code,
+            _ATTESTATION_ERROR_LINES[EXIT_INTERNAL],
+        )
+        sys.stderr.write(line + "\n")
+        return code if code in _ATTESTATION_ERROR_LINES else EXIT_INTERNAL
 
 
 __all__ = [
@@ -232,6 +341,7 @@ __all__ = [
     "EXIT_OK",
     "EXIT_PERSISTENCE",
     "PRIVATE_CONFIG_ENV",
+    "attest_private_opening_main",
     "initialize_private_daily_main",
     "run_private_daily_main",
 ]

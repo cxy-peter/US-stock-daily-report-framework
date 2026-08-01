@@ -439,6 +439,13 @@ class OpeningCheckpoint:
     currency: str
     cash: Decimal
     positions: tuple[OpeningPosition, ...]
+    idempotency_key: str = ""
+    created_at: dt.datetime = dt.datetime(
+        1970,
+        1,
+        1,
+        tzinfo=dt.timezone.utc,
+    )
 
 
 @dataclass(frozen=True)
@@ -538,6 +545,7 @@ class PortfolioLedger:
         positions: Sequence[OpeningPosition] = (),
         *,
         idempotency_key: str = "opening-snapshot",
+        recorded_at: dt.datetime | str | None = None,
     ) -> str:
         """Append the opening snapshot, or return its id on an identical retry."""
         session = _date(opening_session)
@@ -588,6 +596,7 @@ class PortfolioLedger:
                 occurred_at=_session_timestamp(session),
                 idempotency_key=_idempotency_key(idempotency_key),
                 payload=payload,
+                created_at=recorded_at,
             )
             return receipt.event_id
 
@@ -1474,6 +1483,11 @@ class PortfolioLedger:
             return OpeningCheckpoint(
                 opening_event_id=_sha256_digest(row["event_id"], "opening event id"),
                 opening_event_hash=_sha256_digest(row["event_hash"], "opening event hash"),
+                idempotency_key=_idempotency_key(row["idempotency_key"]),
+                created_at=_stored_utc_datetime(
+                    row["created_at"],
+                    "opening created_at",
+                ),
                 session=_date(row["session_date"]),
                 currency=str(payload.get("currency", "")).strip().upper(),
                 cash=_decimal(payload.get("cash"), "opening cash", minimum=ZERO),
@@ -1908,6 +1922,7 @@ class PortfolioLedger:
         occurred_at: dt.datetime | str,
         idempotency_key: str,
         payload: Mapping[str, Any],
+        created_at: dt.datetime | str | None = None,
     ) -> _AppendReceipt:
         """Append one canonical event using the caller's active transaction."""
         normalized_type = str(event_type).strip().lower()
@@ -1945,8 +1960,14 @@ class PortfolioLedger:
             "SELECT event_hash FROM ledger_events ORDER BY sequence_no DESC LIMIT 1"
         ).fetchone()
         previous_hash = _GENESIS_HASH if prior is None else str(prior["event_hash"])
-        created_at = _now_rfc3339()
-        hash_body = {"event_id": event_id, **identity, "created_at": created_at}
+        normalized_created_at = (
+            _now_rfc3339() if created_at is None else _occurred_at(created_at)
+        )
+        hash_body = {
+            "event_id": event_id,
+            **identity,
+            "created_at": normalized_created_at,
+        }
         event_hash = _chain_hash(previous_hash, hash_body)
         connection.execute(
             """
@@ -1966,7 +1987,7 @@ class PortfolioLedger:
                 payload_json,
                 previous_hash,
                 event_hash,
-                created_at,
+                normalized_created_at,
             ),
         )
         return _AppendReceipt(event_id=event_id, event_hash=event_hash, idempotent_replay=False)
@@ -2980,6 +3001,16 @@ def _occurred_at(value: dt.datetime | str | None) -> str:
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise LedgerValidationError("occurred_at must include a timezone")
     return moment.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _stored_utc_datetime(value: Any, field_name: str) -> dt.datetime:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise LedgerIntegrityError(f"{field_name} must be an ISO datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise LedgerIntegrityError(f"{field_name} must include a timezone")
+    return parsed.astimezone(dt.timezone.utc)
 
 
 def _session_timestamp(session: dt.date) -> str:

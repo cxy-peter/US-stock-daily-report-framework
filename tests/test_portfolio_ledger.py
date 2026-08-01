@@ -19,6 +19,7 @@ from serenity_monitor.portfolio_ledger import (
     LedgerPolicy,
     LedgerSettlementBlocked,
     LedgerValidationError,
+    OpeningCheckpoint,
     OpeningPosition,
     PortfolioLedger,
     PortfolioLedgerError,
@@ -35,6 +36,26 @@ SESSION_0 = dt.date(2026, 7, 29)
 SESSION_1 = dt.date(2026, 7, 30)
 SESSION_2 = dt.date(2026, 7, 31)
 AFTER_SESSION_2 = dt.datetime(2026, 8, 1, 5, 15, tzinfo=dt.timezone.utc)
+
+
+def test_opening_checkpoint_keeps_the_original_public_constructor_shape() -> None:
+    checkpoint = OpeningCheckpoint(
+        "1" * 64,
+        "2" * 64,
+        SESSION_0,
+        "USD",
+        Decimal("100"),
+        (),
+    )
+
+    assert checkpoint.session == SESSION_0
+    assert checkpoint.idempotency_key == ""
+    assert checkpoint.created_at == dt.datetime(
+        1970,
+        1,
+        1,
+        tzinfo=dt.timezone.utc,
+    )
 
 
 def _digest(value: object) -> str:

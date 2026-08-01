@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import io
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+import serenity_monitor.opening_owner_attestation as opening_attestation
+import serenity_monitor.private_report_store as private_report_store
 from serenity_monitor.daily_outbox import (
     DailyReportOutbox,
     DeliveryAdapterCapabilities,
+)
+from serenity_monitor.opening_owner_attestation import (
+    create_opening_owner_claim,
+    interactive_owner_presence,
 )
 from serenity_monitor.portfolio_ledger import PortfolioLedger
 from serenity_monitor.private_daily_report import validate_private_daily_report
@@ -23,6 +31,10 @@ from serenity_monitor.private_research_adapter import PrivateResearchInput
 from serenity_monitor.private_runtime_config import (
     PUBLIC_EXAMPLE_NAME,
     load_private_daily_runtime_config,
+)
+from serenity_monitor.private_runtime_paths import (
+    PrivateRuntimePaths,
+    ensure_private_storage,
 )
 from serenity_monitor.provider_registry import (
     CloseObservation,
@@ -46,6 +58,25 @@ class MutableClock:
 
     def __call__(self) -> dt.datetime:
         return self.value
+
+
+@pytest.fixture(autouse=True)
+def _allow_synthetic_temp_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        opening_attestation,
+        "validate_existing_private_storage_root",
+        lambda paths: paths.root,
+    )
+    monkeypatch.setattr(
+        opening_attestation,
+        "validate_existing_private_runtime_file",
+        lambda _paths, path: Path(path),
+    )
+    monkeypatch.setattr(
+        private_report_store,
+        "validate_private_report_directory",
+        lambda paths, directory: Path(directory),
+    )
 
 
 class StubProvider:
@@ -126,27 +157,70 @@ def _registry(config, clock, *, disagreement_after=None):
 
 
 def _state(tmp_path: Path, config, clock):
+    root = tmp_path / "private-runtime"
+    paths = PrivateRuntimePaths(
+        root=root,
+        ledger_database=root / "portfolio-ledger.sqlite3",
+        outbox_database=root / "daily-outbox.sqlite3",
+        report_directory=root / "reports",
+        lock_file=root / "private-daily-runtime.lock",
+    )
+    ensure_private_storage(paths)
+    input_stream = io.StringIO("CONFIRM 23456789AB\n")
+    output_stream = io.StringIO()
+    input_stream.isatty = lambda: True
+    output_stream.isatty = lambda: True
+    presence = interactive_owner_presence(
+        input_stream,
+        output_stream,
+        challenge_factory=lambda: "23456789AB",
+    )
+    config_digest = hashlib.sha256(
+        (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+    ).hexdigest()
+    create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=config_digest,
+        owner_presence=presence,
+        clock=clock,
+    )
     calendar = ExchangeSessionResolver()
     ledger = PortfolioLedger(
-        tmp_path / "ledger.sqlite3",
+        paths.ledger_database,
         policy=config.ledger_policy,
         calendar_resolver=calendar,
     )
-    outbox = DailyReportOutbox(tmp_path / "outbox.sqlite3")
-    reports = tmp_path / "reports"
-    reports.mkdir()
+    reports = paths.report_directory
     registry, first, second = _registry(config, clock)
     initialize_private_ledger(
         config,
+        runtime_paths=paths,
+        config_bytes_sha256=config_digest,
         ledger=ledger,
         close_registry=registry,
         calendar=calendar,
-        as_of=clock(),
+        clock=clock,
     )
+    outbox = DailyReportOutbox(paths.outbox_database)
     return calendar, ledger, outbox, reports, registry, first, second
 
 
 def _runtime(config, calendar, ledger, outbox, reports, registry, clock):
+    runtime_paths = None
+    config_digest = None
+    if not config.simulation:
+        root = ledger.database_path.parent
+        runtime_paths = PrivateRuntimePaths(
+            root=root,
+            ledger_database=ledger.database_path,
+            outbox_database=outbox.database_path,
+            report_directory=reports,
+            lock_file=root / "private-daily-runtime.lock",
+        )
+        config_digest = hashlib.sha256(
+            (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+        ).hexdigest()
     return PrivateDailyRuntime(
         config,
         calendar=calendar,
@@ -155,6 +229,8 @@ def _runtime(config, calendar, ledger, outbox, reports, registry, clock):
         outbox=outbox,
         report_directory=reports,
         clock=clock,
+        runtime_paths=runtime_paths,
+        config_bytes_sha256=config_digest,
     )
 
 
@@ -278,6 +354,29 @@ def test_same_day_slot_reuses_outbox_without_provider_or_ledger_mutation(tmp_pat
     assert ledger.project("modeled").event_count == events
 
 
+def test_same_day_slot_must_belong_to_the_current_ledger_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, _, _ = _state(
+        tmp_path,
+        config,
+        clock,
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    runtime = _runtime(config, calendar, ledger, outbox, reports, registry, clock)
+    runtime.prepare(TARGET)
+    monkeypatch.setattr(ledger, "contains_event_hash", lambda _value: False)
+
+    with pytest.raises(
+        PrivateDailyIntegrityError,
+        match="same_day_report_not_in_current_ledger_chain",
+    ):
+        runtime.prepare(TARGET)
+
+
 def test_prior_prepared_delivery_blocks_next_day_before_provider_or_ledger(tmp_path: Path) -> None:
     config = _config()
     clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
@@ -301,6 +400,38 @@ def test_prior_prepared_delivery_blocks_next_day_before_provider_or_ledger(tmp_p
     assert blocked.status == "pending_prior_delivery"
     assert (len(first.calls), len(second.calls)) == calls
     assert ledger.project("modeled").event_count == events
+
+
+@pytest.mark.parametrize("advance_days", (0, 1))
+def test_live_replay_and_pending_paths_still_require_consumed_attestation(
+    tmp_path: Path,
+    advance_days: int,
+) -> None:
+    live = replace(_config(), classification="private", simulation=False)
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    calendar, ledger, outbox, reports, registry, _, _ = _state(
+        tmp_path,
+        live,
+        clock,
+    )
+    clock.value = dt.datetime(2026, 1, 6, 5, tzinfo=dt.timezone.utc)
+    runtime = _runtime(live, calendar, ledger, outbox, reports, registry, clock)
+    runtime.prepare(TARGET)
+    paths = PrivateRuntimePaths(
+        root=ledger.database_path.parent,
+        ledger_database=ledger.database_path,
+        outbox_database=outbox.database_path,
+        report_directory=reports,
+        lock_file=ledger.database_path.parent / "private-daily-runtime.lock",
+    )
+    paths.opening_receipt_file.unlink()
+    clock.value += dt.timedelta(days=advance_days)
+
+    with pytest.raises(
+        PrivateDailyIntegrityError,
+        match="opening_owner_attestation_not_consumed",
+    ):
+        runtime.prepare(TARGET)
 
 
 def test_weekend_no_new_close_carries_valuation_without_provider_calls(tmp_path: Path) -> None:
@@ -538,6 +669,259 @@ def test_partial_valuation_crash_recovers_idempotently(tmp_path: Path) -> None:
         item["modeled"]["sessions"][0]["amount"] == "10"
         for item in report["dca"]["items"]
     )
+
+
+def test_failed_external_gate_does_not_create_ledger_or_brick_claim_renewal(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    root = tmp_path / "private-runtime"
+    paths = PrivateRuntimePaths(
+        root=root,
+        ledger_database=root / "portfolio-ledger.sqlite3",
+        outbox_database=root / "daily-outbox.sqlite3",
+        report_directory=root / "reports",
+        lock_file=root / "private-daily-runtime.lock",
+    )
+    ensure_private_storage(paths)
+    config_digest = hashlib.sha256(
+        (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+    ).hexdigest()
+
+    def presence():
+        input_stream = io.StringIO("CONFIRM 23456789AB\n")
+        output_stream = io.StringIO()
+        input_stream.isatty = lambda: True
+        output_stream.isatty = lambda: True
+        return interactive_owner_presence(
+            input_stream,
+            output_stream,
+            challenge_factory=lambda: "23456789AB",
+        )
+
+    create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=config_digest,
+        owner_presence=presence(),
+        clock=clock,
+    )
+    registry, _, _ = _registry(
+        config,
+        clock,
+        disagreement_after=config.opening.session,
+    )
+    factory_called = False
+
+    def ledger_factory() -> PortfolioLedger:
+        nonlocal factory_called
+        factory_called = True
+        return PortfolioLedger(paths.ledger_database, policy=config.ledger_policy)
+
+    with pytest.raises(PrivateDailyRuntimeError, match="opening_price_gate_blocked"):
+        initialize_private_ledger(
+            config,
+            runtime_paths=paths,
+            config_bytes_sha256=config_digest,
+            ledger=None,
+            ledger_factory=ledger_factory,
+            close_registry=registry,
+            calendar=ExchangeSessionResolver(),
+            clock=clock,
+        )
+
+    assert factory_called is False
+    assert not paths.ledger_database.exists()
+    assert not paths.opening_intent_file.exists()
+
+    clock.value += dt.timedelta(minutes=31)
+    renewed = create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=config_digest,
+        owner_presence=presence(),
+        clock=clock,
+    )
+    assert renewed.status == "renewed"
+
+
+def test_ledger_factory_failure_happens_before_durable_intent(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    root = tmp_path / "private-runtime"
+    paths = PrivateRuntimePaths(
+        root=root,
+        ledger_database=root / "portfolio-ledger.sqlite3",
+        outbox_database=root / "daily-outbox.sqlite3",
+        report_directory=root / "reports",
+        lock_file=root / "private-daily-runtime.lock",
+    )
+    ensure_private_storage(paths)
+    input_stream = io.StringIO("CONFIRM 23456789AB\n")
+    output_stream = io.StringIO()
+    input_stream.isatty = lambda: True
+    output_stream.isatty = lambda: True
+    create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=hashlib.sha256(
+            (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+        ).hexdigest(),
+        owner_presence=interactive_owner_presence(
+            input_stream,
+            output_stream,
+            challenge_factory=lambda: "23456789AB",
+        ),
+        clock=clock,
+    )
+    registry, _, _ = _registry(config, clock)
+
+    with pytest.raises(OSError, match="synthetic_schema_failure"):
+        initialize_private_ledger(
+            config,
+            runtime_paths=paths,
+            config_bytes_sha256=hashlib.sha256(
+                (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+            ).hexdigest(),
+            ledger=None,
+            ledger_factory=lambda: (_ for _ in ()).throw(
+                OSError("synthetic_schema_failure")
+            ),
+            close_registry=registry,
+            calendar=ExchangeSessionResolver(),
+            clock=clock,
+        )
+
+    assert not paths.opening_intent_file.exists()
+    assert not paths.ledger_database.exists()
+
+
+def test_ledger_mutation_after_factory_is_rejected_before_intent(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    root = tmp_path / "private-runtime"
+    paths = PrivateRuntimePaths(
+        root=root,
+        ledger_database=root / "portfolio-ledger.sqlite3",
+        outbox_database=root / "daily-outbox.sqlite3",
+        report_directory=root / "reports",
+        lock_file=root / "private-daily-runtime.lock",
+    )
+    ensure_private_storage(paths)
+    input_stream = io.StringIO("CONFIRM 23456789AB\n")
+    output_stream = io.StringIO()
+    input_stream.isatty = lambda: True
+    output_stream.isatty = lambda: True
+    config_digest = hashlib.sha256(
+        (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+    ).hexdigest()
+    create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=config_digest,
+        owner_presence=interactive_owner_presence(
+            input_stream,
+            output_stream,
+            challenge_factory=lambda: "23456789AB",
+        ),
+        clock=clock,
+    )
+    registry, _, _ = _registry(config, clock)
+
+    def mutated_factory() -> PortfolioLedger:
+        ledger = PortfolioLedger(paths.ledger_database, policy=config.ledger_policy)
+        Path(str(paths.ledger_database) + "-wal").write_bytes(b"raced")
+        return ledger
+
+    with pytest.raises(
+        PrivateDailyIntegrityError,
+        match="opening_owner_attestation_commit_failed",
+    ):
+        initialize_private_ledger(
+            config,
+            runtime_paths=paths,
+            config_bytes_sha256=config_digest,
+            ledger=None,
+            ledger_factory=mutated_factory,
+            close_registry=registry,
+            calendar=ExchangeSessionResolver(),
+            clock=clock,
+        )
+
+    assert not paths.opening_intent_file.exists()
+
+
+def test_fresh_durable_intent_resumes_with_actual_commit_time(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    clock = MutableClock(dt.datetime(2026, 1, 3, 5, tzinfo=dt.timezone.utc))
+    root = tmp_path / "private-runtime"
+    paths = PrivateRuntimePaths(
+        root=root,
+        ledger_database=root / "portfolio-ledger.sqlite3",
+        outbox_database=root / "daily-outbox.sqlite3",
+        report_directory=root / "reports",
+        lock_file=root / "private-daily-runtime.lock",
+    )
+    ensure_private_storage(paths)
+    input_stream = io.StringIO("CONFIRM 23456789AB\n")
+    output_stream = io.StringIO()
+    input_stream.isatty = lambda: True
+    output_stream.isatty = lambda: True
+    config_digest = hashlib.sha256(
+        (ROOT / "config" / PUBLIC_EXAMPLE_NAME).read_bytes()
+    ).hexdigest()
+    create_opening_owner_claim(
+        config,
+        paths,
+        config_bytes_sha256=config_digest,
+        owner_presence=interactive_owner_presence(
+            input_stream,
+            output_stream,
+            challenge_factory=lambda: "23456789AB",
+        ),
+        clock=clock,
+    )
+    audit = opening_attestation.audit_opening_owner_attestation(
+        config,
+        paths,
+        config_bytes_sha256=config_digest,
+        now=clock(),
+        ledger_binding=None,
+    )
+    assert audit.claim is not None
+    intent = opening_attestation.publish_opening_intent(
+        audit.claim,
+        paths,
+        clock=clock,
+    )
+    clock.value += dt.timedelta(minutes=5)
+    registry, _, _ = _registry(config, clock)
+
+    result = initialize_private_ledger(
+        config,
+        runtime_paths=paths,
+        config_bytes_sha256=config_digest,
+        ledger=None,
+        ledger_factory=lambda: PortfolioLedger(
+            paths.ledger_database,
+            policy=config.ledger_policy,
+        ),
+        close_registry=registry,
+        calendar=ExchangeSessionResolver(),
+        clock=clock,
+    )
+    ledger = PortfolioLedger(paths.ledger_database, policy=config.ledger_policy)
+
+    assert result.status == "initialized"
+    assert ledger.opening_checkpoint().created_at == clock.value
+    assert ledger.opening_checkpoint().created_at > intent.created_at
 
 
 def test_live_call_budget_blocks_large_backfill_without_network(tmp_path: Path) -> None:

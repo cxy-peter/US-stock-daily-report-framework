@@ -1601,7 +1601,8 @@ class DailyReportOutbox:
         return connection
 
     def _ensure_schema(self) -> None:
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             self._enable_wal(connection)
             connection.executescript(
                 """
@@ -1734,6 +1735,8 @@ class DailyReportOutbox:
                 END;
                 """
             )
+        finally:
+            connection.close()
 
     @staticmethod
     def _enable_wal(connection: sqlite3.Connection) -> None:
