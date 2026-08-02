@@ -1,62 +1,82 @@
-# 美股增强研究日报 · 2026-01-02
+# 私人美股日报 · 2026-01-02
 
-> **SIMULATION ONLY** — 全部标的、分数与事件均为合成示例；不含真实账户数据，不连接券商。
+> **SIMULATION ONLY** — 以下数字和标的均为合成示例；系统不自动交易。
 
-## 今日结论
+## 1. 今日结论
 
-**今日没有需要调整的持仓：继续持有。**
+**继续持有；MU/SMH 的中期 HBM 逻辑仍在，但油价与利率风险不支持追涨。今天无强制减仓，新增仓位仅进入人工复核。**
 
-- 全球研究状态：`completed`
-- IBKR/Flex 状态：`not_connected_in_public_example`
-- 主动新增风险：`RESEARCH_GATE_REQUIRED`
-- 自动交易：`false`
+| 标的 | 今日动作 | 解释 | 反证/触发条件 |
+|---|---|---|---|
+| DEMO_MU | HOLD / ADD_REVIEW | HBM 需求与 memory relative strength 为正，但仓位和费用需复核 | 存储价格转弱、出口限制升级或仓位上限触发即取消加仓 |
+| DEMO_SMH | HOLD | 半导体行业趋势仍正，未形成两组证据支持加码 | SMH 相对 SPY 转负且 5/20 日因子失效 |
+| DEMO_QQQM | HOLD | 大盘趋势尚可，但利率压力压制高久期资产 | 实际利率继续上升则收紧风险预算 |
+| DEMO_VOO | HOLD | 作为核心宽基维持 | 市场广度和信用同时恶化时复核 |
+| DEMO_SCHD | HOLD | 防御和现金流角色有效 | 组合防御暴露超上限时再平衡 |
 
-## 全球市场与主观叙事因子
+## 2. 当前持仓状态
 
-- 状态：`healthy`；独立加权来源组：4。
-- 全球叙事风险预算乘数：97.0%。
-- Quora/搜索摘要：`context_only / direct_weight=0`。
-- Reddit/社区：`one_correlated_group / independent_trade=false`。
+| 标的 | 市值 | 组合权重 | 成本 | 未实现盈亏 | 动作 |
+|---|---:|---:|---:|---:|---|
+| DEMO_MU | $10,000 | 20.0% | $8,800 | +$1,200 | HOLD / ADD_REVIEW |
+| DEMO_SMH | $12,500 | 25.0% | $11,900 | +$600 | HOLD |
+| DEMO_QQQM | $11,000 | 22.0% | $10,200 | +$800 | HOLD |
+| DEMO_VOO | $13,500 | 27.0% | $12,900 | +$600 | HOLD |
+| DEMO_SCHD | $3,000 | 6.0% | $3,050 | -$50 | HOLD |
 
-| 主题 | 合成状态 | 主要传导 |
+## 3. 费用与损耗
+
+| 项目 | 本期金额/比率 | 处理 |
 |---|---:|---|
-| oil_supply | +0.34 | XLE/USO 正向；VOO/QQQM/MU 负向 |
-| memory_hbm_demand | +0.41 | MU/SMH 正向 |
-| semiconductor_export_controls | -0.08 | 当前未形成独立确认 |
-| rates_inflation | +0.12 | TLT/长久期科技承压 |
+| 实际交易佣金 | $4.20 | 已从券商事实读取 |
+| 股息预扣税 | $12.00 | 单列，不与投资收益混合 |
+| 利息与其他费用 | $1.10 | 单列 |
+| 回测换手成本 | 0.0038 | 已从 OOS 净收益中扣除 |
+| 滑点 | UNKNOWN | 不假设为 0 |
+| ETF 费率与最终税务 | UNKNOWN | 需产品/税务数据后核验 |
 
-| 来源角色 | 状态 | 用途 |
+## 4. 今日核心论点
+
+- **论点：HBM/存储需求仍支持 MU 与 SMH。** 反证是存储供给过剩、价格下行或出口限制显著升级。
+- **论点：石油供应风险提高通胀与风险溢价。** 反证是停火、霍尔木兹/红海运输恢复和油价回落。
+- **论点：长久期科技不适合在利率压力上升时追涨。** 反证是实际收益率下降并得到市场广度确认。
+
+## 5. 因子有效性
+
+- 采用 1/5/20 日 purged walk-forward；训练和测试之间按 horizon 清洗并设置 embargo。
+- 标准化仅使用训练期；OOS 按 horizon 去重叠。
+- 已扣换手与交易成本，并对同一因子库做 Benjamini–Hochberg 多重检验控制。
+- 每日追加新样本；因子定义只在月度评审或数据定义变化时修改。
+
+| 因子 | 多周期状态 | 中位方向 IC | 最优 q 值 | 稳健度 | 有效权重 |
+|---|---|---:|---:|---:|---:|
+| memory_relative_21 | active | +0.082 | 0.041 | 74% | 41% |
+| market_momentum_63 | active | +0.051 | 0.073 | 66% | 29% |
+| semis_relative_21 | watch | +0.028 | 0.181 | 55% | 12% |
+| rates_relative_21 | quarantined | -0.031 | 0.224 | 31% | 0% |
+
+| Horizon | 状态 | OOS 样本 | 净年化 | Sharpe | PSR | 最大回撤 | 成本拖累 |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | active | 320 | +5.1% | 0.51 | 72% | -8.2% | 0.0041 |
+| 5 | active | 68 | +4.2% | 0.48 | 67% | -7.4% | 0.0038 |
+| 20 | research_only | 25 | +2.8% | 0.31 | 58% | -9.1% | 0.0022 |
+
+## 6. 事件与跨资产传导
+
+| 来源 | 论点 | 主要影响 |
 |---|---|---|
-| 发行人 primary newsroom | healthy | HBM/产能/合作事实 |
-| 国际媒体 | healthy | 石油与地缘事件独立解释 |
-| 韩国地区媒体 | partial | 当地半导体政策与供应链 |
-| Reddit | healthy | 拥挤与分歧，不作一级证据 |
-| Quora/search | context_only | 发现线索，零直接权重 |
+| 国际媒体 | 原油运输风险上升 | XLE/USO 正向；QQQM/MU 风险预算下调 |
+| SK hynix 官方来源 | HBM 产能与合作继续扩张 | MU/SMH 中期需求背景正向 |
+| 韩国媒体 | 当地半导体投资和政策支持 | 半导体产业链背景正向，但不单独触发交易 |
+| Reddit | 社区情绪偏多 | 只用于拥挤与分歧，不作独立证据 |
+| Quora/search | 出现估值争论 | 零直接权重，仅作线索 |
 
-## 滚动回归与因子有效性
+<details><summary>数据源、测试与运行状态</summary>
 
-- 模型：`walk_forward_ridge:synthetic-example`
-- 训练—测试：严格先后；OOS 记录按 5 日 horizon 去重叠。
-- OOS 净年化：+4.2%；年化波动：8.8%；Sharpe：0.48。
-- 换手与 5 bps 成本已扣除。
+- 公共框架测试：PASS
+- 私有部署测试：PASS
+- IBKR 快照：synthetic / fresh
+- 自动执行：false
+- 缺失数据：保持 UNKNOWN
 
-| 因子 | 方向校正 OOS IC | 系数一致性 | 状态 | 有效权重 |
-|---|---:|---:|---|---:|
-| memory_relative_21 | +0.08 | 70% | active | 39% |
-| market_momentum_63 | +0.04 | 62% | active | 19% |
-| oil_relative_21 | +0.01 | 54% | watch | 3% |
-| rates_relative_21 | -0.03 | 48% | quarantined | 0% |
-
-## 定投与仓位边界
-
-| 标的 | 配置计划 | 模型状态 | 券商确认 |
-|---|---:|---|---|
-| DEMO_MU | $20 | KEEP_BASE | UNKNOWN |
-| DEMO_QQQM | $20 | KEEP_BASE | UNKNOWN |
-| DEMO_SMH | $20 | KEEP_BASE | UNKNOWN |
-| DEMO_VOO | $20 | KEEP_BASE | UNKNOWN |
-| DEMO_SCHD | $20 | KEEP_BASE | UNKNOWN |
-
-- 配置计划、模型建议与券商成交必须分开。
-- 全球媒体、KOL、社区、回归或优化器均不能下单。
-- 缺失的账户、价格、税务、IPS 或成本信息保持 `UNKNOWN`。
+</details>
