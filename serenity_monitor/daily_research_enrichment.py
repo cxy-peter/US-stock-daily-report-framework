@@ -492,11 +492,11 @@ def build_daily_research_enrichment(
 def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
     """Render compact thesis-first research; detailed health is collapsible."""
 
-    lines = ["## 今日核心论点"]
+    lines = ["## 5. 今日核心论点"]
     lines.extend(f"- **论点：** {thesis}" for thesis in build_research_theses(result))
 
     institutional = result.institutional_factor_research
-    lines += ["", "## 因子有效性"]
+    lines += ["", "## 6. 因子有效性"]
     if institutional is None:
         lines.append("- `BLOCKED`：无法完成 1/5/20 日 purged OOS 验证，因子权重为 0。")
     else:
@@ -532,7 +532,7 @@ def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
     narrative = result.global_narratives
     lines += [
         "",
-        "## 事件与跨资产传导",
+        "## 7. 事件与跨资产传导",
         f"- 独立来源组：{narrative.independent_groups}；叙事风险预算乘数："
         f"{narrative.risk_budget_multiplier:.1%}；社区拥挤惩罚："
         f"{narrative.crowding_penalty:.1%}。",
@@ -560,7 +560,7 @@ def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
     if narrative.observations:
         lines += ["", "| 来源 | 主题 | 方向 | 权重 | 论据 |", "|---|---|---:|---:|---|"]
         for item in narrative.observations[:8]:
-            state = "线索" if item.context_only else "加权"
+            state = "零权重线索" if item.context_only or item.weight < 0.01 else "加权"
             lines.append(
                 f"| {item.source} | {item.topic} | {item.direction:+.2f} | "
                 f"{item.weight:.2f} ({state}) | {item.title.replace('|', '/')} |"

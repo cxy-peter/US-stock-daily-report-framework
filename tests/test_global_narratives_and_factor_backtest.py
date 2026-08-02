@@ -52,7 +52,7 @@ def test_global_sources_are_bounded_and_transmitted():
             "item_id": "quora-1",
             "source": "Public web search snippet",
             "source_kind": "kol",
-            "title": "Quora: Is Micron overvalued after the HBM rally?",
+            "title": "Quora: Is Micron HBM demand still bullish?",
             "published": "2026-08-02T08:00:00Z",
             "url": "https://www.quora.com/example",
             "credibility": 0.2,
@@ -117,10 +117,61 @@ def test_correlated_reposts_are_not_double_counted_and_future_is_excluded():
     )
 
     assert repeated.topic_scores["oil_supply"] == one.topic_scores["oil_supply"]
-    assert all(
-        "future" not in item.event_id
-        for item in repeated.observations
+    assert all("future" not in item.event_id for item in repeated.observations)
+
+
+def test_ascii_topic_terms_use_boundaries_and_neutral_pages_are_dropped():
+    now = dt.datetime(2026, 8, 2, 12, tzinfo=dt.timezone.utc)
+    unrelated = [
+        {
+            "item_id": "report-volume",
+            "source": "Nasdaq News",
+            "source_kind": "news",
+            "title": "Coinbase Reports Record Trading Volume",
+            "published": "2026-08-02T10:00:00Z",
+            "url": "https://www.nasdaq.com/articles/example-1",
+            "credibility": 0.7,
+        },
+        {
+            "item_id": "support-rating",
+            "source": "Nasdaq News",
+            "source_kind": "news",
+            "title": "Analyst Report Supports an Upgrade After Earnings",
+            "published": "2026-08-02T09:00:00Z",
+            "url": "https://www.nasdaq.com/articles/example-2",
+            "credibility": 0.7,
+        },
+        {
+            "item_id": "generic-oil",
+            "source": "Public web search snippet",
+            "source_kind": "news",
+            "title": "Oil - general reference article",
+            "published": "2026-08-02T08:00:00Z",
+            "url": "https://example.com/oil-reference",
+            "credibility": 0.5,
+        },
+    ]
+    result = score_global_narratives(unrelated, as_of=now, portfolio_tickers=["VOO"])
+    assert "shipping_disruption" not in result.topic_scores
+    assert "oil_supply" not in result.topic_scores
+    assert not result.observations
+
+    real_event = score_global_narratives(
+        [
+            {
+                "item_id": "port-closure",
+                "source": "Al Jazeera",
+                "source_kind": "news",
+                "title": "Port closure reroutes container shipping after tanker attack",
+                "published": "2026-08-02T10:00:00Z",
+                "url": "https://www.aljazeera.com/news/port-closure",
+                "credibility": 0.9,
+            }
+        ],
+        as_of=now,
+        portfolio_tickers=["VOO"],
     )
+    assert real_event.topic_scores["shipping_disruption"] > 0
 
 
 def test_make_forward_returns_uses_only_future_sessions():
@@ -158,17 +209,11 @@ def test_walk_forward_regression_admits_predictive_factor_and_charges_costs():
         transaction_cost_bps=2.0,
     )
 
-    diagnostics = {
-        item.factor: item
-        for item in result.factor_diagnostics
-    }
+    diagnostics = {item.factor: item for item in result.factor_diagnostics}
     assert result.status == "active"
     assert result.oos_observations >= 300
     assert diagnostics["predictive"].admission_status == "active"
-    assert (
-        diagnostics["predictive"].directional_information_coefficient
-        > 0.20
-    )
+    assert diagnostics["predictive"].directional_information_coefficient > 0.20
     assert diagnostics["constant"].admission_status == "blocked"
     assert result.total_cost_drag > 0
     assert result.net_mean_return <= result.gross_mean_return
@@ -207,16 +252,8 @@ def test_future_target_mutation_does_not_change_earlier_oos_predictions():
         transaction_cost_bps=1.0,
     )
 
-    first_fold = [
-        row
-        for row in first.oos_records
-        if row["fold_id"] == "fold-001"
-    ]
-    second_fold = [
-        row
-        for row in second.oos_records
-        if row["fold_id"] == "fold-001"
-    ]
+    first_fold = [row for row in first.oos_records if row["fold_id"] == "fold-001"]
+    second_fold = [row for row in second.oos_records if row["fold_id"] == "fold-001"]
     assert first_fold == second_fold
     assert first.model_version == second.model_version
 
