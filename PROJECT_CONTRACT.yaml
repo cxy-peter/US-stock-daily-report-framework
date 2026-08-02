@@ -25,6 +25,8 @@ non_negotiables:
   - prediction-market prices are noisy forecasts, not objective probabilities
   - modeled DCA is never broker-confirmed execution
   - all point-in-time models must preserve first-observed timestamps
+  - factor residual calibration may never pool model versions
+  - corporate actions may never auto-adjust the confirmed ledger
 private_daily_plan:
   five_tickers_required: true
   base_amount_usd_each: 20
@@ -53,12 +55,48 @@ advanced_models:
     implemented_library: true
     freeze_before_resolution_hours: 24
     lookahead_permitted: false
+  volatility_surface_and_tail_risk:
+    implemented_library: true
+    inputs: [VIX1D, VIX9D, VIX, VIX3M, VIX6M, VVIX, SKEW, options_chain]
+    correlated_option_surface_group: true
+    downside_only_risk_control: true
+    independent_trade_trigger: false
+  overnight_and_premarket_anomaly:
+    implemented_library: true
+    own_history_normalization_required: true
+    futures_and_liquidity_confirmation: true
+    second_user_facing_report: false
+    independent_trade_trigger: false
   barra_public_proxy:
     implemented_library: true
     commercial_barra_claim: false
   kalman_dynamic_exposure:
     implemented_library: true
     disclosed_holding_claim: false
+  brinson_fachler_and_carino:
+    implemented_library: true
+    accounting_reconciliation_required: true
+    broker_order_capability: false
+  constrained_asset_allocation:
+    implemented_library: true
+    turnover_and_cost_constraints: true
+    tax_and_owner_gates_downstream: true
+    broker_order_capability: false
+  factor_residual_calibration:
+    implemented_library: true
+    factor_model_version_isolation: true
+    cross_version_pooling: false
+    automatic_weight_quarantine: true
+  prediction_settlement_scheduler:
+    implemented_library: true
+    horizons: [1, 5, 20, 60]
+    complete_close_path_required: true
+    idempotent_callback_only: true
+    broker_order_capability: false
+  corporate_action_reconciliation:
+    implemented_library: true
+    primary_source_required: true
+    automatic_adjustment: false
   manager_skill_and_fragility:
     implemented_library: true
     copy_trade_requires_fragility_gate: true
@@ -82,14 +120,15 @@ operational_activation_gates:
 codex_handoff_order:
   - complete one live accepted-close and private report trial
   - connect the tested IBKR Flex adapter to the private ledger reconciliation queue
-  - embed political claim and live Polymarket aggregates in the single private report
-  - implement verified GPT receiver
-  - schedule prediction settlements
-  - add production-authorized source configuration and corporate-action reconciliation
+  - embed political, prediction, social, volatility, attribution, and allocation aggregates in the single private report
+  - schedule exact-version prediction settlements
+  - implement verified GPT receiver and local or private-GitHub fallback channel
+  - add production-authorized source credentials and private snapshot persistence
+  - connect corporate-action evidence to the owner-confirmation queue
 acceptance:
   commands:
     - python -m compileall -q serenity_monitor run_pro_daily.py
-    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py tests/test_political_and_live_polymarket.py
+    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py tests/test_political_and_live_polymarket.py tests/test_advanced_risk_attribution_allocation.py
     - python run_pro_daily.py --config examples/pro_daily_config.example.yaml --out-dir out_pro_demo
   expected:
     - report_json_validates_schema
@@ -100,4 +139,9 @@ acceptance:
     - live_polymarket_is_liquidity_and_calibration_weighted
     - polymarket_uses_only_pre_embargo_probability_after_resolution
     - ibkr_flex_never_mutates_the_confirmed_ledger
+    - option_surface_signals_are_not_double_counted
+    - attribution_reconciles_to_active_return
+    - allocation_respects_turnover_and_group_caps
+    - factor_residuals_are_never_pooled_across_versions
+    - corporate_actions_require_primary_evidence_and_owner_confirmation
     - public_examples_are_synthetic
