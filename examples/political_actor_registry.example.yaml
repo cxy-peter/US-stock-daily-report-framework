@@ -1,0 +1,250 @@
+schema_version: political_actor_registry/v1.0.0
+as_of: "2026-08-02"
+refresh_current_holders_every_days: 7
+notes:
+  - Current-holder names are metadata, not permanent identifiers.
+  - Production collectors should resolve official roles from authoritative sites before use.
+  - Actor weights are model-score priors, never portfolio weights.
+  - Donald Trump has the highest prior because the presidency has direct policy authority.
+
+policy_actors:
+  - actor_id: donald_trump
+    current_holder: Donald J. Trump
+    role: President of the United States
+    institution: White House
+    actor_type: president
+    base_weight: 1.00
+    policy_authority: 1.00
+    official_handles: [POTUS, realDonaldTrump]
+    monitored_topics: [trade_tariff, ai_semiconductor, energy_power, fiscal_tax, monetary_rates, financial_regulation, digital_assets, defense_geopolitics, immigration_labor, healthcare, infrastructure, space, housing, antitrust_competition]
+
+  - actor_id: vice_president
+    current_holder: JD Vance
+    role: Vice President of the United States
+    institution: White House
+    actor_type: vice_president
+    base_weight: 0.78
+    policy_authority: 0.75
+    official_handles: [VP]
+    monitored_topics: [trade_tariff, fiscal_tax, financial_regulation, digital_assets, defense_geopolitics, immigration_labor]
+
+  - actor_id: white_house_press_secretary
+    current_holder: Karoline Leavitt
+    role: White House Press Secretary
+    institution: White House
+    actor_type: spokesperson
+    base_weight: 0.58
+    policy_authority: 0.48
+    official_handles: [PressSec]
+    monitored_topics: [trade_tariff, ai_semiconductor, energy_power, fiscal_tax, financial_regulation, defense_geopolitics, immigration_labor]
+
+  - actor_id: treasury_secretary
+    current_holder: Scott Bessent
+    role: Secretary of the Treasury
+    institution: U.S. Department of the Treasury
+    actor_type: cabinet
+    base_weight: 0.86
+    policy_authority: 0.90
+    monitored_topics: [fiscal_tax, monetary_rates, financial_regulation, digital_assets, trade_tariff]
+
+  - actor_id: commerce_secretary
+    current_holder: Howard Lutnick
+    role: Secretary of Commerce
+    institution: U.S. Department of Commerce
+    actor_type: cabinet
+    base_weight: 0.79
+    policy_authority: 0.85
+    monitored_topics: [trade_tariff, ai_semiconductor, infrastructure, space, antitrust_competition]
+
+  - actor_id: us_trade_representative
+    current_holder: Jamieson Greer
+    role: United States Trade Representative
+    institution: Office of the U.S. Trade Representative
+    actor_type: cabinet
+    base_weight: 0.82
+    policy_authority: 0.92
+    official_handles: [USTradeRep]
+    monitored_topics: [trade_tariff, ai_semiconductor, energy_power, defense_geopolitics]
+
+  - actor_id: omb_director
+    current_holder: Russ Vought
+    role: Director of the Office of Management and Budget
+    institution: White House
+    actor_type: executive_office
+    base_weight: 0.72
+    policy_authority: 0.82
+    monitored_topics: [fiscal_tax, financial_regulation, healthcare, infrastructure]
+
+  - actor_id: energy_secretary
+    current_holder: Chris Wright
+    role: Secretary of Energy
+    institution: U.S. Department of Energy
+    actor_type: cabinet
+    base_weight: 0.76
+    policy_authority: 0.88
+    monitored_topics: [energy_power, ai_semiconductor, infrastructure, defense_geopolitics]
+
+  - actor_id: secretary_of_state
+    current_holder: Marco Rubio
+    role: Secretary of State
+    institution: U.S. Department of State
+    actor_type: cabinet
+    base_weight: 0.67
+    policy_authority: 0.78
+    monitored_topics: [trade_tariff, defense_geopolitics, digital_assets]
+
+  - actor_id: attorney_general
+    current_holder: Pam Bondi
+    role: Attorney General
+    institution: U.S. Department of Justice
+    actor_type: cabinet
+    base_weight: 0.56
+    policy_authority: 0.74
+    monitored_topics: [financial_regulation, digital_assets, antitrust_competition]
+
+  - actor_id: homeland_security_secretary
+    current_holder: Markwayne Mullin
+    role: Secretary of Homeland Security
+    institution: U.S. Department of Homeland Security
+    actor_type: cabinet
+    base_weight: 0.53
+    policy_authority: 0.72
+    monitored_topics: [immigration_labor, defense_geopolitics, infrastructure]
+
+  - actor_id: ostp_director
+    current_holder: Michael Kratsios
+    role: Assistant to the President and Director of OSTP
+    institution: White House OSTP
+    actor_type: executive_office
+    base_weight: 0.73
+    policy_authority: 0.82
+    monitored_topics: [ai_semiconductor, energy_power, infrastructure, space, healthcare]
+
+  - actor_id: ai_crypto_advisor
+    current_holder: David Sacks
+    role: Special Advisor for AI and Crypto; PCAST Co-Chair
+    institution: White House
+    actor_type: executive_advisor
+    base_weight: 0.73
+    policy_authority: 0.72
+    monitored_topics: [ai_semiconductor, digital_assets, energy_power, financial_regulation]
+
+  - actor_id: nec_director
+    current_holder: Kevin Hassett
+    role: Director of the National Economic Council
+    institution: White House
+    actor_type: executive_office
+    base_weight: 0.78
+    policy_authority: 0.84
+    monitored_topics: [fiscal_tax, monetary_rates, trade_tariff, financial_regulation, housing]
+
+  - actor_id: federal_reserve_chair
+    current_holder: Kevin Warsh
+    role: Chair of the Federal Reserve Board and FOMC
+    institution: Federal Reserve
+    actor_type: independent_regulator
+    base_weight: 0.92
+    policy_authority: 1.00
+    monitored_topics: [monetary_rates, financial_regulation, housing]
+
+  - actor_id: fed_supervision_vice_chair
+    current_holder: Michelle W. Bowman
+    role: Vice Chair for Supervision
+    institution: Federal Reserve
+    actor_type: independent_regulator
+    base_weight: 0.76
+    policy_authority: 0.90
+    monitored_topics: [financial_regulation, monetary_rates, housing]
+
+  - actor_id: sec_chair
+    current_holder: Paul S. Atkins
+    role: Chair of the Securities and Exchange Commission
+    institution: SEC
+    actor_type: independent_regulator
+    base_weight: 0.78
+    policy_authority: 0.92
+    monitored_topics: [financial_regulation, digital_assets, antitrust_competition]
+
+  - actor_id: fhfa_director
+    current_holder: null
+    role: Director of the Federal Housing Finance Agency
+    institution: FHFA
+    actor_type: independent_regulator
+    base_weight: 0.64
+    policy_authority: 0.88
+    monitored_topics: [housing, monetary_rates, financial_regulation]
+
+  - actor_id: cea_leadership
+    current_holder: null
+    role: Chair or senior leadership of the Council of Economic Advisers
+    institution: White House CEA
+    actor_type: executive_office
+    base_weight: 0.62
+    policy_authority: 0.65
+    monitored_topics: [fiscal_tax, monetary_rates, trade_tariff, immigration_labor]
+
+  - actor_id: pcast_technology_members
+    current_holder: PCAST technology and infrastructure members
+    role: President's Council of Advisors on Science and Technology
+    institution: White House PCAST
+    actor_type: advisory_council
+    base_weight: 0.50
+    policy_authority: 0.45
+    monitored_topics: [ai_semiconductor, energy_power, infrastructure, digital_assets, space]
+
+industry_role_watchlist:
+  - role_id: micron_ceo
+    role: Chief Executive Officer of Micron Technology
+    related_tickers: [MU, SMH]
+    topics: [ai_semiconductor, trade_tariff, energy_power]
+    base_weight: 0.62
+  - role_id: kla_ceo
+    role: Chief Executive Officer of KLA Corporation
+    related_tickers: [KLAC, SMH]
+    topics: [ai_semiconductor, trade_tariff]
+    base_weight: 0.60
+  - role_id: nvidia_ceo
+    role: Chief Executive Officer of NVIDIA
+    related_tickers: [SMH, QQQM]
+    topics: [ai_semiconductor, energy_power, trade_tariff]
+    base_weight: 0.62
+  - role_id: amd_ceo
+    role: Chief Executive Officer of AMD
+    related_tickers: [SMH, QQQM]
+    topics: [ai_semiconductor, trade_tariff]
+    base_weight: 0.58
+  - role_id: bloom_energy_ceo
+    role: Chief Executive Officer of Bloom Energy
+    related_tickers: [BE]
+    topics: [energy_power, infrastructure, ai_semiconductor]
+    base_weight: 0.57
+  - role_id: nebius_ceo
+    role: Chief Executive Officer of Nebius Group
+    related_tickers: [NBIS]
+    topics: [ai_semiconductor, energy_power, infrastructure]
+    base_weight: 0.56
+  - role_id: iren_co_ceos
+    role: Co-Chief Executive Officers of IREN
+    related_tickers: [IREN]
+    topics: [ai_semiconductor, energy_power, digital_assets]
+    base_weight: 0.54
+  - role_id: coinbase_ceo
+    role: Chief Executive Officer of Coinbase
+    related_tickers: [COIN]
+    topics: [digital_assets, financial_regulation]
+    base_weight: 0.58
+  - role_id: circle_ceo
+    role: Chief Executive Officer of Circle Internet Group
+    related_tickers: [CRCL]
+    topics: [digital_assets, financial_regulation]
+    base_weight: 0.58
+  - role_id: spacex_leadership
+    role: Chief Executive Officer and President of SpaceX
+    related_tickers: [SPCX, UFO]
+    topics: [space, defense_geopolitics, infrastructure]
+    base_weight: 0.62
+  - role_id: rocket_lab_ceo
+    role: Chief Executive Officer of Rocket Lab
+    related_tickers: [UFO]
+    topics: [space, defense_geopolitics]
+    base_weight: 0.55

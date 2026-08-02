@@ -21,6 +21,8 @@ non_negotiables:
   - one user-visible daily report per date
   - missing data remains UNKNOWN, blocked, degraded, or stale; never neutral by default
   - social media cannot independently open, add, trim, or exit
+  - political communications cannot independently open, add, trim, or exit
+  - prediction-market prices are noisy forecasts, not objective probabilities
   - modeled DCA is never broker-confirmed execution
   - all point-in-time models must preserve first-observed timestamps
 private_daily_plan:
@@ -29,10 +31,24 @@ private_daily_plan:
   tickers_loaded_from_private_config: true
   automatic_execution: false
 advanced_models:
+  political_communication_brief:
+    implemented_library: true
+    raw_mention_count_signal: false
+    complete_policy_claim_extraction: true
+    president_has_highest_actor_prior: true
+    media_can_replace_primary_source: false
+    decision_score_cap: 0.08
+    independent_trade_trigger: false
   trump_policy_transmission_index:
     implemented_library: true
     decision_score_cap: 0.05
     independent_trade_trigger: false
+  live_polymarket_sentiment:
+    implemented_library: true
+    decision_score_cap: 0.03
+    conditions: [spread, liquidity, depth, time_to_resolution, calibration]
+    objective_probability_claim: false
+    order_capability: false
   polymarket_settlement_event_study:
     implemented_library: true
     freeze_before_resolution_hours: 24
@@ -66,21 +82,22 @@ operational_activation_gates:
 codex_handoff_order:
   - complete one live accepted-close and private report trial
   - connect the tested IBKR Flex adapter to the private ledger reconciliation queue
+  - embed political claim and live Polymarket aggregates in the single private report
   - implement verified GPT receiver
-  - merge legacy research outputs into the ledger-backed report
   - schedule prediction settlements
-  - add production policy and Polymarket collectors
-  - add automated corporate-action reconciliation
+  - add production-authorized source configuration and corporate-action reconciliation
 acceptance:
   commands:
-    - python -m compileall -q serenity_monitor/pro_research serenity_monitor/ibkr_flex.py run_pro_daily.py
-    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py
+    - python -m compileall -q serenity_monitor run_pro_daily.py
+    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py tests/test_political_and_live_polymarket.py
     - python run_pro_daily.py --config examples/pro_daily_config.example.yaml --out-dir out_pro_demo
   expected:
     - report_json_validates_schema
     - report_contains_hold_or_explicit_block
     - dca_is_non_executing
     - policy_and_social_cannot_independently_trade
-    - polymarket_uses_only_pre_embargo_probability
+    - political_claims_are_not_keyword_counts
+    - live_polymarket_is_liquidity_and_calibration_weighted
+    - polymarket_uses_only_pre_embargo_probability_after_resolution
     - ibkr_flex_never_mutates_the_confirmed_ledger
     - public_examples_are_synthetic

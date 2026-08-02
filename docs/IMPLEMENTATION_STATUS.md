@@ -24,6 +24,29 @@ live credentials, report artifact, Actions summary or repository writeback.
 - append-only prediction research ledger with 1/5/20/60-session settlement;
 - institutional `evaluate-us-funds` Skill and offline fund monitor.
 
+### Political communication and live prediction-market research
+
+- complete-sentence policy-claim extraction rather than keyword counts;
+- actor-specific authority, with the President receiving the highest prior and
+  other officials/industry executives receiving topic-specific weights;
+- implementation-stage, specificity, novelty, horizon, holdings relevance and
+  recency scoring;
+- independent media consensus, disagreement and uncertainty overlays that do
+  not replace the direct source;
+- public White House article/listing collector, official X API v2 collector and
+  RSS/Atom media collector;
+- public read-only Polymarket Gamma/CLOB client for active markets, probability
+  history, spread and order book;
+- unresolved-market probability velocity, entropy, depth, spread,
+  time-to-resolution and calibration scoring;
+- political group cap of 8%, live Polymarket group cap of 3%, no automatic
+  execution and no Polymarket wallet/order capability;
+- refreshable example registry for 20 policy roles and portfolio-industry
+  leadership roles.
+
+Collectors and models are tested with synthetic data. No production X token,
+private source configuration or owner report is part of the public repository.
+
 ### Accepted close and private accounting
 
 - raw Twelve Data and Alpha Vantage close observations;
@@ -64,19 +87,20 @@ The following offline libraries are implemented under
 - one-report research orchestrator with bounded risk multipliers;
 - stable `pro_daily_report/v1.0.0` JSON and Chinese Markdown output.
 
-These modules do not include production collectors and cannot submit orders.
 The Barra module does not claim commercial MSCI Barra data; Kalman exposure is
 return-inferred rather than disclosed holdings; manager skill does not bypass
 the fragility/copy-trade gate.
 
 ## Implemented but not yet connected end-to-end
 
+- political and live Polymarket results are not yet embedded as versioned
+  enrichment objects inside the ledger-backed private daily report;
 - the Pro suite is not yet embedded as a versioned enrichment object inside the
   ledger-backed private daily-report contract;
 - the IBKR Flex library is not yet wired to owner-only credentials, persisted
   reconciliation evidence or the private ledger confirmation queue;
 - Social Heat and fund-monitor aggregates can enter the private report, but
-  production source adapters and persistent owner-only snapshots are incomplete;
+  production source credentials and owner-only snapshots are incomplete;
 - prediction-ledger settlement exists, but the private daily runtime does not
   yet schedule every due horizon automatically;
 - the delivery outbox exists, but no verified GPT receiver is deployed.
@@ -89,6 +113,8 @@ the fragility/copy-trade gate.
 - one real dual-source accepted-close run must be persisted;
 - the opening ledger must be owner-attested and initialized;
 - one private IBKR Flex reconciliation must be executed and reviewed;
+- official political/X/Polymarket source configuration must be reviewed and
+  recorded without exposing credentials;
 - a receiver must prove stable idempotency or delivery lookup;
 - one same-day replay must prove no duplicate delivery;
 - exactly one recurring product-level daily task must be identified before
@@ -96,8 +122,8 @@ the fragility/copy-trade gate.
 
 ## Remaining roadmap
 
-- private-runtime integration and one live trial for the tested IBKR Flex layer;
-- production White House/presidential-action and Polymarket adapters;
+- private-runtime integration and one live trial for the tested IBKR Flex,
+  political-communication and live Polymarket layers;
 - automated corporate-action evidence and adjustment workflow;
 - structured prediction/topic detail in a new private-report schema version;
 - VIX1D/VIX9D/VIX6M/VVIX/SKEW and options-chain stress;
