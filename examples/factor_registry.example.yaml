@@ -1,0 +1,123 @@
+schema_version: factor_registry/v1.0.0
+as_of: "2026-08-02"
+policy:
+  daily_monitoring: true
+  daily_factor_invention: false
+  factor_definition_review: monthly_or_data_definition_change
+  horizons_sessions: [1, 5, 20]
+  minimum_oos_observations: 24
+  multiple_testing: benjamini_hochberg
+  fdr_alpha: 0.10
+  purge_equal_to_horizon: true
+  embargo_equal_to_horizon: true
+  transaction_costs_required: true
+  capacity_liquidity_tax_review_downstream: true
+  automatic_execution: false
+
+factors:
+  market_momentum_21:
+    family: momentum
+    source_type: market_price
+    definition: SPY total return over 21 sessions
+    economic_rationale: behavioral underreaction and trend persistence
+    academic_anchor: AQR Value and Momentum Everywhere
+    implementation_role: directional_context
+
+  market_momentum_63:
+    family: momentum
+    source_type: market_price
+    definition: SPY total return over 63 sessions
+    economic_rationale: medium-horizon trend persistence
+    academic_anchor: AQR Value and Momentum Everywhere
+    implementation_role: directional_context
+
+  market_volatility_21:
+    family: volatility
+    source_type: market_price
+    definition: negative 21-session SPY realized volatility
+    economic_rationale: volatility-managed risk scaling
+    academic_anchor: Moreira and Muir Volatility-Managed Portfolios
+    implementation_role: downside_risk_budget
+
+  semis_relative_21:
+    family: industry_relative_strength
+    source_type: market_price
+    definition: SMH 21-session return minus SPY 21-session return
+    economic_rationale: semiconductor industry leadership
+    implementation_role: portfolio_specific_selection
+
+  memory_relative_21:
+    family: industry_cycle
+    source_type: market_price
+    definition: MU 21-session return minus SMH 21-session return
+    economic_rationale: memory/HBM cycle relative strength
+    implementation_role: portfolio_specific_selection
+
+  oil_relative_21:
+    family: macro_cross_asset
+    source_type: market_price
+    definition: XLE 21-session return minus SPY 21-session return
+    economic_rationale: energy inflation and geopolitical transmission
+    implementation_role: risk_context
+
+  rates_relative_21:
+    family: macro_cross_asset
+    source_type: market_price
+    definition: TLT 21-session return minus SPY 21-session return
+    economic_rationale: duration and discount-rate transmission
+    implementation_role: risk_context
+
+  gold_relative_21:
+    family: macro_cross_asset
+    source_type: market_price
+    definition: GLD 21-session return minus SPY 21-session return
+    economic_rationale: real-rate and safe-haven transmission
+    implementation_role: risk_context
+
+  breadth_relative_21:
+    family: breadth
+    source_type: market_price
+    definition: IWM 21-session return minus SPY 21-session return
+    economic_rationale: broad participation and small-cap confirmation
+    implementation_role: market_confirmation
+
+  defensive_relative_21:
+    family: quality_defensive
+    source_type: market_price
+    definition: SCHD 21-session return minus SPY 21-session return
+    economic_rationale: defensive quality and dividend leadership
+    academic_anchor: MSCI quality / low-volatility foundations and AQR QMJ
+    implementation_role: defensive_context
+
+research_library_candidates:
+  - market
+  - size
+  - value
+  - profitability
+  - investment
+  - momentum
+  - quality
+  - low_volatility
+  - liquidity
+  - trend
+  - carry
+  - sentiment
+  - event_and_policy_transmission
+
+references:
+  - label: Fama/French Data Library
+    url: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/Data_Library.html
+  - label: AQR Quality Minus Junk
+    url: https://www.aqr.com/Insights/Research/Working-Paper/Quality-Minus-Junk
+  - label: AQR Value and Momentum Everywhere
+    url: https://www.aqr.com/insights/research/journal-article/value-and-momentum-everywhere
+  - label: MSCI Foundations of Factor Investing
+    url: https://www.msci.com/research-and-insights/paper/foundations-of-factor-investing
+  - label: Moreira and Muir Volatility Managed Portfolios
+    url: https://www.nber.org/papers/w22208
+  - label: Harvey Liu Zhu factor multiple testing
+    url: https://www.nber.org/papers/w20592
+  - label: Gu Kelly Xiu machine learning asset pricing
+    url: https://www.nber.org/papers/w25398
+  - label: Bailey et al backtest overfitting
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2308659
