@@ -22,9 +22,12 @@ non_negotiables:
   - missing data remains UNKNOWN, blocked, degraded, or stale; never neutral by default
   - social media cannot independently open, add, trim, or exit
   - political communications cannot independently open, add, trim, or exit
+  - global narratives cannot independently open, add, trim, or exit
   - prediction-market prices are noisy forecasts, not objective probabilities
   - modeled DCA is never broker-confirmed execution
   - all point-in-time models must preserve first-observed timestamps
+  - walk-forward training must end before every out-of-sample test block
+  - Quora and search-only snippets have zero direct decision weight
   - factor residual calibration may never pool model versions
   - corporate actions may never auto-adjust the confirmed ledger
 private_daily_plan:
@@ -32,6 +35,9 @@ private_daily_plan:
   base_amount_usd_each: 20
   tickers_loaded_from_private_config: true
   automatic_execution: false
+  daily_research_refresh: true
+  ibkr_flex_daily_refresh_required: false
+  stale_broker_snapshot_blocks_active_add_or_open: true
 advanced_models:
   political_communication_brief:
     implemented_library: true
@@ -45,6 +51,41 @@ advanced_models:
     implemented_library: true
     decision_score_cap: 0.05
     independent_trade_trigger: false
+  global_market_narratives:
+    implemented_library: true
+    sources:
+      - major_international_media
+      - korean_regional_media
+      - issuer_primary_newsroom
+      - reddit_community
+      - quora_search_context
+      - bounded_kol_search
+    topics:
+      - oil_supply
+      - middle_east_escalation
+      - shipping_disruption
+      - memory_hbm_demand
+      - memory_oversupply
+      - semiconductor_export_controls
+      - korea_semiconductor_policy
+      - trade_tariff
+      - china_demand
+      - rates_inflation
+    correlated_source_collapse: independence_group_x_topic
+    quora_direct_weight: 0
+    downside_risk_budget_cap: 0.10
+    decision_score_range: [-0.04, 0.01]
+    independent_trade_trigger: false
+  walk_forward_factor_validation:
+    implemented_library: true
+    strict_train_before_test: true
+    non_overlapping_oos_by_horizon: true
+    training_only_standardization: true
+    transaction_costs_required: true
+    feature_version_isolation: true
+    future_target_mutation_may_change_prior_prediction: false
+    automatic_factor_quarantine: true
+    broker_order_capability: false
   live_polymarket_sentiment:
     implemented_library: true
     decision_score_cap: 0.03
@@ -120,7 +161,8 @@ operational_activation_gates:
 codex_handoff_order:
   - complete one live accepted-close and private report trial
   - connect the tested IBKR Flex adapter to the private ledger reconciliation queue
-  - embed political, prediction, social, volatility, attribution, and allocation aggregates in the single private report
+  - embed political, global, prediction, social, volatility, attribution, factor-validation, and allocation aggregates in the single private report
+  - decouple daily research refresh from optional or stale-triggered IBKR Flex refresh
   - schedule exact-version prediction settlements
   - implement verified GPT receiver and local or private-GitHub fallback channel
   - add production-authorized source credentials and private snapshot persistence
@@ -128,7 +170,7 @@ codex_handoff_order:
 acceptance:
   commands:
     - python -m compileall -q serenity_monitor run_pro_daily.py
-    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py tests/test_political_and_live_polymarket.py tests/test_advanced_risk_attribution_allocation.py
+    - pytest -q tests/test_pro_research_suite.py tests/test_ibkr_flex.py tests/test_political_and_live_polymarket.py tests/test_advanced_risk_attribution_allocation.py tests/test_global_narratives_and_factor_backtest.py tests/test_daily_research_enrichment.py
     - python run_pro_daily.py --config examples/pro_daily_config.example.yaml --out-dir out_pro_demo
   expected:
     - report_json_validates_schema
@@ -136,6 +178,12 @@ acceptance:
     - dca_is_non_executing
     - policy_and_social_cannot_independently_trade
     - political_claims_are_not_keyword_counts
+    - global_headlines_are_collapsed_by_independence_group_and_topic
+    - quora_context_has_zero_direct_weight
+    - reddit_is_one_correlated_community_group
+    - walk_forward_training_ends_before_test
+    - future_target_mutation_does_not_change_prior_oos_prediction
+    - factor_costs_are_deducted_and_weak_factors_are_quarantined
     - live_polymarket_is_liquidity_and_calibration_weighted
     - polymarket_uses_only_pre_embargo_probability_after_resolution
     - ibkr_flex_never_mutates_the_confirmed_ledger
