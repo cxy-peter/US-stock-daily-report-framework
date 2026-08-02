@@ -1,8 +1,8 @@
-"""Daily global-source and factor-validation enrichment for one private report.
+"""Daily global-source and institutional factor enrichment.
 
 Public research may refresh every day while broker reconciliation runs on a
-separate cadence. Missing research remains visible and never becomes a neutral
-or bullish default. Adjusted history is research-only, not settlement-grade.
+separate cadence. Missing research remains visible and adjusted price history is
+research-only, never a settlement-grade close.
 """
 from __future__ import annotations
 
@@ -14,21 +14,17 @@ import numpy as np
 import pandas as pd
 import requests
 
-from .external_views import (
-    ExternalBundle,
-    ExternalSettings,
-    collect_external_views,
-)
+from .external_views import ExternalBundle, ExternalSettings, collect_external_views
 from .factor_backtest import FactorBacktestResult, walk_forward_factor_backtest
-from .global_market_narratives import (
-    GlobalNarrativeResult,
-    score_global_narratives,
+from .global_market_narratives import GlobalNarrativeResult, score_global_narratives
+from .institutional_factor_research import (
+    InstitutionalFactorResearchResult,
+    run_institutional_factor_research,
 )
 
 
-# external_views intentionally caps public-search queries at four. Keep every
-# required category inside these four executed queries rather than documenting
-# sources that would be silently truncated.
+# external_views executes at most four public-search queries. These four groups
+# cover every requested category rather than silently truncating the list.
 DEFAULT_GLOBAL_QUERIES = (
     "site:aljazeera.com oil crude OPEC Hormuz Red Sea shipping",
     "site:news.skhynix.com HBM DRAM memory semiconductor partnership",
@@ -60,6 +56,11 @@ _ALIASES = {
     "NVDA": ["NVIDIA", "Nvidia"],
 }
 
+_ASSET_PROXY = {
+    "QQQM": "QQQ",
+    "VOO": "SPY",
+}
+
 
 @dataclass(frozen=True)
 class DailyResearchEnrichment:
@@ -67,6 +68,7 @@ class DailyResearchEnrichment:
     generated_at: str
     global_narratives: GlobalNarrativeResult
     factor_validation: FactorBacktestResult | None
+    institutional_factor_research: InstitutionalFactorResearchResult | None
     source_health: tuple[Mapping[str, Any], ...]
     warnings: tuple[str, ...]
     automatic_trading_permitted: bool = False
@@ -77,9 +79,12 @@ class DailyResearchEnrichment:
             "generated_at": self.generated_at,
             "global_narratives": self.global_narratives.to_dict(),
             "factor_validation": (
+                None if self.factor_validation is None else self.factor_validation.to_dict()
+            ),
+            "institutional_factor_research": (
                 None
-                if self.factor_validation is None
-                else self.factor_validation.to_dict()
+                if self.institutional_factor_research is None
+                else self.institutional_factor_research.to_dict()
             ),
             "source_health": [dict(item) for item in self.source_health],
             "warnings": list(self.warnings),
@@ -122,12 +127,7 @@ def default_global_source_settings(*, lookback_days: int = 7) -> ExternalSetting
         news_limit=6,
         stocktwits_enabled=False,
         reddit_enabled=True,
-        reddit_subreddits=(
-            "stocks",
-            "investing",
-            "wallstreetbets",
-            "semiconductors",
-        ),
+        reddit_subreddits=("stocks", "investing", "wallstreetbets", "semiconductors"),
         reddit_limit_per_sub=3,
         x_enabled=False,
         x_discovery_enabled=False,
@@ -163,15 +163,13 @@ def collect_daily_global_narratives(
     items = list(bundle.global_items)
     for view in bundle.by_ticker.values():
         items.extend(view.items)
-    return (
-        score_global_narratives(
-            items,
-            as_of=now,
-            lookback_days=source_settings.lookback_days,
-            portfolio_tickers=symbol_list,
-        ),
-        bundle,
+    result = score_global_narratives(
+        items,
+        as_of=now,
+        lookback_days=source_settings.lookback_days,
+        portfolio_tickers=symbol_list,
     )
+    return result, bundle
 
 
 def fetch_research_price_history(
@@ -179,7 +177,7 @@ def fetch_research_price_history(
     *,
     period: str = "5y",
 ) -> tuple[pd.DataFrame | None, Mapping[str, Any]]:
-    """Fetch adjusted history as a non-settlement research source."""
+    """Fetch adjusted public history as a non-settlement research source."""
 
     requested = sorted(
         {
@@ -224,13 +222,13 @@ def fetch_research_price_history(
             .dropna(axis=1, how="all")
             .dropna(how="all")
         )
-        if len(close) < 280:
-            raise ValueError("insufficient history")
+        if len(close) < 650:
+            raise ValueError("insufficient history for multi-horizon validation")
         return close, {
             "source": "research_price_history",
             "status": "healthy",
             "detail": (
-                f"yfinance adjusted research history; rows={len(close)}; "
+                f"adjusted public research history; rows={len(close)}; "
                 "not settlement-grade"
             ),
         }
@@ -246,7 +244,7 @@ def build_factor_dataset(
     prices: pd.DataFrame,
     portfolio_symbols: Iterable[str],
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """Build close-t signals and a t+1 onward portfolio-return target input."""
+    """Build close-t signals and the daily portfolio-proxy return series."""
 
     close = prices.copy().sort_index().apply(pd.to_numeric, errors="coerce")
     close.columns = [str(column).upper() for column in close.columns]
@@ -272,8 +270,12 @@ def build_factor_dataset(
 
     signals: dict[str, pd.Series] = {}
     if "SPY" in returns:
-        signals["market_momentum_21"] = total_return("SPY", 21)  # type: ignore[assignment]
-        signals["market_momentum_63"] = total_return("SPY", 63)  # type: ignore[assignment]
+        momentum_21 = total_return("SPY", 21)
+        momentum_63 = total_return("SPY", 63)
+        if momentum_21 is not None:
+            signals["market_momentum_21"] = momentum_21
+        if momentum_63 is not None:
+            signals["market_momentum_63"] = momentum_63
         signals["market_volatility_21"] = -returns["SPY"].rolling(21).std()
     candidates = {
         "semis_relative_21": relative("SMH", "SPY", 21),
@@ -294,9 +296,11 @@ def validate_daily_factors(
     prices: pd.DataFrame,
     portfolio_symbols: Iterable[str],
     *,
-    feature_version: str = "daily_global_proxy_factors/v1.0.0",
+    feature_version: str = "daily_global_proxy_factors/v2.0.0",
     transaction_cost_bps: float = 5.0,
 ) -> FactorBacktestResult:
+    """Compatibility 5-session result used by existing consumers."""
+
     signals, target = build_factor_dataset(prices, portfolio_symbols)
     return walk_forward_factor_backtest(
         signals,
@@ -304,14 +308,92 @@ def validate_daily_factors(
         target_name="equal_weight_private_portfolio_proxy",
         feature_version=feature_version,
         horizon_sessions=5,
-        train_size=252,
+        train_size=504,
         test_size=63,
         step_size=63,
         expanding=True,
         ridge=5.0,
         transaction_cost_bps=transaction_cost_bps,
-        minimum_oos_observations=30,
+        minimum_oos_observations=24,
+        purge_sessions=5,
+        embargo_sessions=5,
+        multiple_testing_alpha=0.10,
     )
+
+
+def validate_institutional_factors(
+    prices: pd.DataFrame,
+    portfolio_symbols: Iterable[str],
+    *,
+    as_of: dt.date | None = None,
+    transaction_cost_bps: float = 5.0,
+) -> InstitutionalFactorResearchResult:
+    signals, target = build_factor_dataset(prices, portfolio_symbols)
+    return run_institutional_factor_research(
+        signals,
+        target,
+        as_of=as_of,
+        feature_version="institutional_factor_library/v1.0.0",
+        horizons=(1, 5, 20),
+        train_size=504,
+        test_size=63,
+        transaction_cost_bps=transaction_cost_bps,
+    )
+
+
+def asset_narrative_score(result: DailyResearchEnrichment, ticker: str) -> float:
+    symbol = str(ticker).strip().upper()
+    proxy = _ASSET_PROXY.get(symbol, symbol)
+    return float(
+        result.global_narratives.asset_scores.get(
+            symbol,
+            result.global_narratives.asset_scores.get(proxy, 0.0),
+        )
+    )
+
+
+def build_research_theses(result: DailyResearchEnrichment) -> tuple[str, ...]:
+    """Return direct, falsifiable daily theses rather than process narration."""
+
+    topics = result.global_narratives.topic_scores
+    theses: list[str] = []
+    if topics.get("memory_hbm_demand", 0.0) > 0.10:
+        theses.append(
+            "HBM/存储需求仍支持 MU 与 SMH；若 memory_oversupply 或出口限制转强，该论点失效。"
+        )
+    if topics.get("memory_oversupply", 0.0) > 0.10:
+        theses.append(
+            "存储供给过剩风险正在上升，MU/SMH 不宜追涨；库存和价格重新收紧才解除。"
+        )
+    if topics.get("oil_supply", 0.0) > 0.10 or topics.get("middle_east_escalation", 0.0) > 0.10:
+        theses.append(
+            "石油供应或中东冲突提高通胀与风险溢价，压制长久期科技；停火和运输恢复是反证。"
+        )
+    if topics.get("semiconductor_export_controls", 0.0) > 0.10:
+        theses.append(
+            "半导体出口限制是 MU/SMH/Nasdaq 的负面尾部因子；正式豁免或许可落地可推翻。"
+        )
+    if topics.get("rates_inflation", 0.0) > 0.10:
+        theses.append(
+            "利率与通胀压力仍不利于高久期资产；实际收益率回落与通胀降温是反证。"
+        )
+    institutional = result.institutional_factor_research
+    if institutional:
+        if institutional.active_factors:
+            theses.append(
+                "多周期 OOS 仍有效的因子："
+                + "、".join(institutional.active_factors[:4])
+                + "；只有跨期限、扣费后和 FDR 通过才保留权重。"
+            )
+        if institutional.quarantined_factors:
+            theses.append(
+                "今日隔离的因子："
+                + "、".join(institutional.quarantined_factors[:4])
+                + "；其信号不进入加仓判断。"
+            )
+    if not theses:
+        theses.append("当前没有形成两组以上独立证据支持的新方向，基准结论是持有而非猜测。")
+    return tuple(theses[:6])
 
 
 def build_daily_research_enrichment(
@@ -349,42 +431,48 @@ def build_daily_research_enrichment(
             }
         )
 
-    factor_result: FactorBacktestResult | None = None
+    institutional: InstitutionalFactorResearchResult | None = None
+    primary_factor: FactorBacktestResult | None = None
     warnings = list(global_result.warnings)
     if prices is not None:
         try:
-            factor_result = validate_daily_factors(prices, symbol_list)
+            institutional = validate_institutional_factors(
+                prices,
+                symbol_list,
+                as_of=now.date(),
+            )
+            primary_factor = institutional.primary_result
             health.append(
                 {
-                    "source": "factor_validation",
-                    "status": factor_result.status,
+                    "source": "institutional_factor_validation",
+                    "status": institutional.status,
                     "detail": (
-                        f"oos={factor_result.oos_observations}; "
-                        f"model={factor_result.model_version}"
+                        f"horizons=1/5/20; active={len(institutional.active_factors)}; "
+                        f"quarantined={len(institutional.quarantined_factors)}"
                     ),
                 }
             )
-            warnings.extend(factor_result.warnings)
+            warnings.extend(institutional.warnings)
         except (ValueError, KeyError, np.linalg.LinAlgError):
             health.append(
                 {
-                    "source": "factor_validation",
+                    "source": "institutional_factor_validation",
                     "status": "blocked",
-                    "detail": "walk-forward factor validation unavailable",
+                    "detail": "purged multi-horizon factor validation unavailable",
                 }
             )
-            warnings.append("Factor validation is blocked; no factor weight is inferred.")
+            warnings.append("Institutional factor validation is blocked; no factor weight is inferred.")
     else:
         health.append(
             {
-                "source": "factor_validation",
+                "source": "institutional_factor_validation",
                 "status": "blocked",
                 "detail": "research price history missing",
             }
         )
 
     statuses = {str(item.get("status") or "") for item in health}
-    if factor_result is not None and global_result.status in {"healthy", "research_only"}:
+    if institutional is not None and global_result.status in {"healthy", "research_only"}:
         status = "completed"
     elif "error" in statuses:
         status = "degraded"
@@ -394,29 +482,60 @@ def build_daily_research_enrichment(
         status=status,
         generated_at=_rfc3339(now),
         global_narratives=global_result,
-        factor_validation=factor_result,
+        factor_validation=primary_factor,
+        institutional_factor_research=institutional,
         source_health=tuple(health),
         warnings=tuple(dict.fromkeys(warnings)),
     )
 
 
-def _pct(value: float | None) -> str:
-    return "UNKNOWN" if value is None else f"{value:.2%}"
-
-
 def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
+    """Render compact thesis-first research; detailed health is collapsible."""
+
+    lines = ["## 今日核心论点"]
+    lines.extend(f"- **论点：** {thesis}" for thesis in build_research_theses(result))
+
+    institutional = result.institutional_factor_research
+    lines += ["", "## 因子有效性"]
+    if institutional is None:
+        lines.append("- `BLOCKED`：无法完成 1/5/20 日 purged OOS 验证，因子权重为 0。")
+    else:
+        lines += [
+            f"- 总状态：`{institutional.status}`；风险预算乘数："
+            f"{institutional.risk_budget_multiplier:.1%}。",
+            "- 每日追加新样本并重跑版本化 walk-forward；因子定义只在月度评审或数据定义变化时修改。",
+            "",
+            "| 因子 | 多周期状态 | 中位方向IC | 最优q值 | 稳健度 | 有效权重 |",
+            "|---|---|---:|---:|---:|---:|",
+        ]
+        for item in sorted(
+            institutional.factor_diagnostics,
+            key=lambda row: row.effective_weight_multiplier,
+            reverse=True,
+        ):
+            ic = "UNKNOWN" if item.median_directional_ic is None else f"{item.median_directional_ic:+.3f}"
+            q_value = "UNKNOWN" if item.best_multiple_testing_q is None else f"{item.best_multiple_testing_q:.3f}"
+            lines.append(
+                f"| {item.factor} | {item.admission_status} | {ic} | {q_value} | "
+                f"{item.median_robustness_score:.1%} | {item.effective_weight_multiplier:.1%} |"
+            )
+        lines += ["", "| Horizon | 状态 | OOS样本 | 净年化 | Sharpe | PSR | 最大回撤 | 成本拖累 |", "|---:|---|---:|---:|---:|---:|---:|---:|"]
+        for row in institutional.horizon_summaries:
+            sharpe = "UNKNOWN" if row.net_sharpe is None else f"{row.net_sharpe:.2f}"
+            psr = "UNKNOWN" if row.probabilistic_sharpe_ratio is None else f"{row.probabilistic_sharpe_ratio:.1%}"
+            lines.append(
+                f"| {row.horizon_sessions} | {row.status} | {row.oos_observations} | "
+                f"{row.net_annualized_return:+.2%} | {sharpe} | {psr} | "
+                f"{row.max_drawdown:.2%} | {row.total_cost_drag:.4f} |"
+            )
+
     narrative = result.global_narratives
-    lines = [
-        "## 全球市场与主观叙事因子",
-        f"- 状态：`{narrative.status}`；有效观察：{narrative.accepted_count}；"
-        f"独立加权来源组：{narrative.independent_groups}。",
-        f"- 全球叙事风险预算乘数：{narrative.risk_budget_multiplier:.1%}；"
-        f"有界研究分贡献：{narrative.decision_score_contribution:+.2%}。",
-        f"- 社区情绪：{narrative.community_sentiment:+.3f}；"
-        f"媒体分歧：{narrative.media_disagreement:.1%}；"
-        f"拥挤惩罚：{narrative.crowding_penalty:.1%}。",
-        "- Quora/搜索摘要只作线索，Reddit/社区只作一个相关证据组；"
-        "均不能单独加仓或触发交易。",
+    lines += [
+        "",
+        "## 事件与跨资产传导",
+        f"- 独立来源组：{narrative.independent_groups}；叙事风险预算乘数："
+        f"{narrative.risk_budget_multiplier:.1%}；社区拥挤惩罚："
+        f"{narrative.crowding_penalty:.1%}。",
     ]
     if narrative.topic_scores:
         topics = "；".join(
@@ -427,7 +546,7 @@ def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
                 reverse=True,
             )[:8]
         )
-        lines.append(f"- 主题状态：{topics}")
+        lines.append(f"- 主题：{topics}")
     if narrative.asset_scores:
         assets = "；".join(
             f"{key}={value:+.2f}"
@@ -437,84 +556,37 @@ def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
                 reverse=True,
             )[:10]
         )
-        lines.append(f"- 跨资产传导：{assets}")
+        lines.append(f"- 资产传导：{assets}")
     if narrative.observations:
-        lines += [
-            "",
-            "| 来源 | 主题 | 方向 | 权重 | 状态 | 标题 |",
-            "|---|---|---:|---:|---|---|",
-        ]
-        for item in narrative.observations[:10]:
-            state = "context_only" if item.context_only else "weighted"
+        lines += ["", "| 来源 | 主题 | 方向 | 权重 | 论据 |", "|---|---|---:|---:|---|"]
+        for item in narrative.observations[:8]:
+            state = "线索" if item.context_only else "加权"
             lines.append(
                 f"| {item.source} | {item.topic} | {item.direction:+.2f} | "
-                f"{item.weight:.2f} | {state} | {item.title.replace('|', '/')} |"
+                f"{item.weight:.2f} ({state}) | {item.title.replace('|', '/')} |"
             )
 
-    factor = result.factor_validation
-    lines += ["", "## 滚动回归与因子有效性"]
-    if factor is None:
-        lines.append("- `BLOCKED`：缺少足够的历史价格或因子代理；不推断因子有效。")
-    else:
-        sharpe = "UNKNOWN" if factor.net_sharpe is None else f"{factor.net_sharpe:.2f}"
-        pred_ic = (
-            "UNKNOWN"
-            if factor.prediction_information_coefficient is None
-            else f"{factor.prediction_information_coefficient:+.3f}"
-        )
-        lines += [
-            f"- 状态：`{factor.status}`；OOS 观察：{factor.oos_observations}；"
-            f"严格 walk-forward 模型：`{factor.model_version}`。",
-            f"- OOS 净年化：{factor.net_annualized_return:+.2%}；"
-            f"净年化波动：{factor.net_annualized_volatility:.2%}；Sharpe：{sharpe}。",
-            f"- 命中率：{_pct(factor.hit_rate)}；预测 IC：{pred_ic}；"
-            f"最大回撤：{factor.max_drawdown:.2%}。",
-            f"- 平均换手：{factor.average_turnover:.2%}；"
-            f"成本拖累：{factor.total_cost_drag:.4f}；"
-            f"风险预算乘数：{factor.risk_budget_multiplier:.1%}。",
-            "",
-            "| 因子 | OOS IC | 方向校正 IC | 系数一致性 | 状态 | 有效权重 |",
-            "|---|---:|---:|---:|---|---:|",
-        ]
-        for item in factor.factor_diagnostics:
-            raw_ic = (
-                "UNKNOWN"
-                if item.oos_information_coefficient is None
-                else f"{item.oos_information_coefficient:+.3f}"
-            )
-            directional_ic = (
-                "UNKNOWN"
-                if item.directional_information_coefficient is None
-                else f"{item.directional_information_coefficient:+.3f}"
-            )
-            lines.append(
-                f"| {item.factor} | {raw_ic} | {directional_ic} | "
-                f"{item.coefficient_sign_consistency:.1%} | "
-                f"{item.admission_status} | {item.effective_weight_multiplier:.1%} |"
-            )
-
-    lines += [
-        "",
-        "## 全球研究源健康",
-        "| 来源 | 状态 | 说明 |",
-        "|---|---|---|",
-    ]
+    lines += ["", "<details><summary>数据源健康与方法边界</summary>", "", "| 来源 | 状态 | 说明 |", "|---|---|---|"]
     for item in result.source_health:
-        detail = str(item.get("detail") or "").replace("|", "/")
         lines.append(
-            f"| {item.get('source', 'unknown')} | {item.get('status', 'unknown')} | {detail} |"
+            f"| {item.get('source', 'unknown')} | {item.get('status', 'unknown')} | "
+            f"{str(item.get('detail') or '').replace('|', '/')} |"
         )
+    lines += ["", "- Quora/搜索摘要直接权重为 0；Reddit 是一个相关社区组。", "- 所有价格历史仅用于研究，不能替代 accepted close 或券商成交。", "- 因子、媒体、优化器均无下单权。", "", "</details>"]
     return "\n".join(lines).rstrip() + "\n"
 
 
 __all__ = [
     "DEFAULT_GLOBAL_QUERIES",
     "DailyResearchEnrichment",
+    "asset_narrative_score",
     "build_daily_research_enrichment",
     "build_factor_dataset",
+    "build_research_theses",
     "collect_daily_global_narratives",
     "default_global_source_settings",
     "fetch_research_price_history",
     "render_daily_research_markdown",
     "validate_daily_factors",
+    "validate_institutional_factors",
 ]
