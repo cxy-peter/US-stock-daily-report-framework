@@ -24,6 +24,40 @@ live credentials, report artifact, Actions summary or repository writeback.
 - append-only prediction research ledger;
 - institutional `evaluate-us-funds` Skill and offline fund monitor.
 
+### Global market narratives and factor validation
+
+- source-role separation for issuer/government/regulatory primary evidence,
+  major international media, Korean regional/wire media, KOL/community and
+  public-search context;
+- default public-source coverage for Al Jazeera oil/geopolitics, the SK hynix
+  newsroom, Yonhap, Korea Herald, Korea Times, Reddit and Quora/search context;
+- English/Korean topic detection for oil supply, Middle East escalation,
+  shipping, HBM demand, memory oversupply, export controls, Korean chip policy,
+  tariffs, China demand and rates/inflation;
+- explicit cross-asset transmission to MU, SMH, broad/Nasdaq equity, energy,
+  gold, Treasuries and related proxies;
+- repeated-headline and syndication collapse by independence group and topic;
+- Quora/search-only zero direct weight and Reddit/community as one correlated
+  social evidence group;
+- media disagreement, community sentiment and crowding diagnostics;
+- downside-only global-narrative risk reduction capped at 10% and research-score
+  contribution bounded to -4%/+1%, with no independent trade authority;
+- strict walk-forward ridge regression with train-before-test ordering;
+- training-only standardization, horizon-spaced non-overlapping OOS records and
+  turnover-cost deduction;
+- OOS return/volatility/Sharpe, hit rate, rank IC, R-squared, drawdown, turnover
+  and cost-drag reporting;
+- per-factor coefficient stability, directional OOS IC and
+  `active/watch/quarantined/blocked` admission;
+- exact feature/model-version isolation and a regression test proving that a
+  future-target mutation cannot change an earlier OOS prediction;
+- one daily enrichment orchestrator that may refresh public research every day
+  independently of less-frequent IBKR reconciliation.
+
+These libraries use public or synthetic research data only. Adjusted price
+history is explicitly non-settlement-grade and cannot replace the accepted-close
+path.
+
 ### Political communication and live prediction-market research
 
 - complete-sentence policy-claim extraction rather than keyword counts;
@@ -131,6 +165,9 @@ the fragility/copy-trade gate.
 
 ## Implemented but not yet connected end-to-end
 
+- global narratives and walk-forward factor validation have a daily enrichment
+  orchestrator and deterministic Markdown, but are not yet embedded as a
+  versioned object in the ledger-backed private report contract;
 - political, live Polymarket, volatility, option, overnight, attribution,
   allocation and calibration outputs are not yet embedded as versioned
   enrichment objects inside the single ledger-backed private daily report;
@@ -161,8 +198,8 @@ the fragility/copy-trade gate.
 
 ## Remaining production roadmap
 
-- private-runtime integration and one live trial for broker, political,
-  Polymarket, Social Heat, volatility and corporate-action layers;
+- private-runtime integration and one live trial for broker, global-market,
+  political, Polymarket, Social Heat, volatility and corporate-action layers;
 - a new private-report schema version containing structured research enrichment;
 - production option-surface, overnight and corporate-action data adapters;
 - automatic due-settlement callback integration;
