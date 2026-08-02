@@ -17,14 +17,16 @@ point-in-time sources
 + confirmed and modeled books
 + read-only broker reconciliation
 + objective market stress
++ claim-level policy communication analysis
++ live and resolved prediction-market research
 + Social Heat and prediction calibration
 + fund/product monitoring
-+ policy, event-study and factor-risk models
++ factor-risk and dynamic-exposure models
 -> one private JSON contract
 -> one deterministic Chinese Markdown report
 ```
 
-A KOL, social-media consensus, Trump statement or prediction-market result
+A KOL, social-media consensus, political statement or prediction-market result
 cannot independently create `OPEN`, `ADD`, `TRIM` or `EXIT`. Missing data is
 reported as `UNKNOWN`, `blocked`, `degraded` or `stale`; it is never silently
 converted to neutral.
@@ -78,14 +80,46 @@ confirmed book. It cannot change the ledger or place an order. A private live
 query and daily-runtime adapter remain deployment work. See
 [`docs/IBKR_FLEX_RECONCILIATION.md`](docs/IBKR_FLEX_RECONCILIATION.md).
 
+## Political and policy communications
+
+`serenity_monitor/political_communications.py` extracts complete economically
+material claims from official actions, speeches, interviews, press briefings,
+official X posts and media interpretation. It evaluates actor authority,
+implementation stage, dates/quantities/agencies, novelty, holdings relevance and
+media disagreement. It does not treat word frequency as policy information.
+
+Public adapters are available for:
+
+- White House presidential actions, fact sheets, releases and statements;
+- official X API v2 timelines;
+- public RSS/Atom media feeds.
+
+A refreshable example registry covers 20 policy roles and portfolio-industry
+roles. Donald Trump receives the highest actor prior because the presidency has
+direct policy authority; other officials and executives remain topic-specific,
+independent evidence. See
+[`docs/POLITICAL_COMMUNICATIONS.md`](docs/POLITICAL_COMMUNICATIONS.md).
+
+## Live and resolved Polymarket research
+
+`serenity_monitor/polymarket_live.py` reads public Gamma/CLOB metadata, price
+history, spread and order-book depth. An unresolved market is treated as a noisy
+forecast and sentiment state whose weight depends on liquidity, spread,
+time-to-resolution and historical calibration. The correlated live group is
+capped at 3% of the decision score and has no wallet or order method.
+
+The separate resolved-event study freezes the last probability observed before
+a 24-hour embargo and measures 1/5/20/60-session returns. It never backfills a
+post-resolution probability into a predictor. See
+[`docs/LIVE_POLYMARKET.md`](docs/LIVE_POLYMARKET.md).
+
 ## Pro research suite
 
 `serenity_monitor/pro_research/` adds tested offline libraries for:
 
 - **Trump Policy Transmission Index**: source authority, policy stage,
   magnitude, horizon, recency and asset sensitivity;
-- **Polymarket settlement studies**: freeze the last probability before a
-  24-hour embargo and measure 1/5/20/60-session post-resolution returns;
+- **Polymarket settlement studies**: point-in-time event analysis;
 - **Barra-inspired public proxy**: factor exposure, shrunk covariance,
   systematic/specific risk and marginal risk contribution;
 - **Kalman dynamic exposure**: time-varying return-inferred alpha and beta;
@@ -94,9 +128,10 @@ query and daily-runtime adapter remain deployment work. See
 - **One-report orchestration**: combine bounded model multipliers into
   `HOLD`, `RISK_REBALANCE` or `PAUSE_AND_VERIFY`.
 
-These are not production data collectors and do not claim commercial Barra
-output, disclosed holdings, or automatic trading. See
-[`docs/PRO_RESEARCH_SUITE.md`](docs/PRO_RESEARCH_SUITE.md).
+These are not automatic trading modules and do not claim commercial Barra
+output or disclosed holdings. Academic and institutional motivation, caveats and
+factor-admission rules are recorded in
+[`docs/ACADEMIC_EVIDENCE_MAP.md`](docs/ACADEMIC_EVIDENCE_MAP.md).
 
 ## Synthetic validation
 
@@ -121,13 +156,6 @@ python run_pro_daily.py \
   --out-dir out_pro_demo
 ```
 
-The Pro command writes exactly:
-
-```text
-pro_daily_report.json
-pro_daily_report.md
-```
-
 All public values are fictional and all automatic-execution fields are fixed to
 `false`.
 
@@ -142,6 +170,7 @@ readiness audit
 -> ledger initialization
 -> dual-source accepted close
 -> read-only IBKR reconciliation
+-> political / prediction / social / factor research enrichment
 -> private report preparation
 -> verified receiver delivery
 -> same-day replay without duplication
@@ -157,7 +186,8 @@ using any mutating private-runtime command.
 
 - private live IBKR Flex query configuration and ledger-queue integration;
 - verified GPT receiver and recurring private delivery;
-- production White House/Trump and Polymarket collectors;
+- private actor/source credentials and live political/Polymarket snapshot
+  persistence;
 - automated corporate-action reconciliation;
 - scheduled prediction settlement and structured topic detail in the private
   report contract;
