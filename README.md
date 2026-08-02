@@ -1,9 +1,8 @@
 # US Stock Daily Investment Research Framework
 
-A privacy-safe, auditable framework for one owner-only post-close research
-report. It keeps accounting facts, modeled recurring investments, research
-signals and broker-confirmed events separate, and it has no broker order
-endpoint.
+A privacy-safe, auditable framework for one owner-only post-close report. It
+keeps broker facts, accounting, modeled recurring investments, research signals
+and owner decisions separate, and it has no broker order endpoint.
 
 ## What makes it different
 
@@ -12,24 +11,24 @@ This framework instead uses explicit evidence and accounting boundaries:
 
 ```text
 point-in-time sources
-+ source/claim/fragility/manipulation gates
 + accepted-close consensus
 + confirmed and modeled books
-+ read-only broker reconciliation
-+ objective market stress
-+ claim-level policy communication analysis
++ read-only broker and corporate-action reconciliation
++ claim-level political communication analysis
 + live and resolved prediction-market research
-+ Social Heat and prediction calibration
-+ fund/product monitoring
-+ factor-risk and dynamic-exposure models
++ Social Heat and exact-version signal calibration
++ volatility surface, option-tail and overnight risk
++ factor risk, dynamic exposure and fund research
++ Brinson/Carino attribution and constrained allocation
 -> one private JSON contract
 -> one deterministic Chinese Markdown report
+-> owner manual decision and owner manual trade
 ```
 
-A KOL, social-media consensus, political statement or prediction-market result
-cannot independently create `OPEN`, `ADD`, `TRIM` or `EXIT`. Missing data is
-reported as `UNKNOWN`, `blocked`, `degraded` or `stale`; it is never silently
-converted to neutral.
+A KOL, social-media consensus, political statement, prediction-market result,
+optimizer or factor model cannot independently create `OPEN`, `ADD`, `TRIM` or
+`EXIT`. Missing data is reported as `UNKNOWN`, `blocked`, `degraded` or `stale`;
+it is never silently converted to neutral.
 
 ## Repository boundary
 
@@ -44,10 +43,9 @@ public framework repository
 ├── report schemas
 └── public CI: offline/mock only
 
-owner-only local runtime
-├── private configuration
-├── accepted-close cache
-├── broker reconciliation evidence
+owner-only runtime
+├── private configuration and broker snapshots
+├── accepted-close and corporate-action evidence
 ├── portfolio and prediction ledgers
 ├── delivery outbox
 └── private reports
@@ -62,7 +60,6 @@ the separate private deployment role.
 - SEC/X/Reddit and authorized-social evidence boundaries;
 - KOL source, claim, manager-fragility and manipulation scoring;
 - deterministic portfolio and risk-group gates;
-- VIX/VIX3M, credit and breadth downside overlay;
 - Twelve Data plus Alpha Vantage accepted-close consensus;
 - U.S. exchange calendar with holidays, DST and early closes;
 - append-only confirmed/modeled portfolio ledger;
@@ -74,10 +71,9 @@ the separate private deployment role.
 - append-only 1/5/20/60-session prediction research ledger;
 - institutional U.S. fund/product Skill and offline fund monitor.
 
-The IBKR Flex library can parse account summaries, positions, trades, cash
+The IBKR layer can parse account summaries, positions, trades, cash
 transactions, fees and corporate actions and compare positions/cash with the
-confirmed book. It cannot change the ledger or place an order. A private live
-query and daily-runtime adapter remain deployment work. See
+confirmed book. It cannot change the ledger or place an order. See
 [`docs/IBKR_FLEX_RECONCILIATION.md`](docs/IBKR_FLEX_RECONCILIATION.md).
 
 ## Political and policy communications
@@ -86,18 +82,12 @@ query and daily-runtime adapter remain deployment work. See
 material claims from official actions, speeches, interviews, press briefings,
 official X posts and media interpretation. It evaluates actor authority,
 implementation stage, dates/quantities/agencies, novelty, holdings relevance and
-media disagreement. It does not treat word frequency as policy information.
+media disagreement. It does not use word frequency as the policy signal.
 
-Public adapters are available for:
-
-- White House presidential actions, fact sheets, releases and statements;
-- official X API v2 timelines;
-- public RSS/Atom media feeds.
-
-A refreshable example registry covers 20 policy roles and portfolio-industry
-roles. Donald Trump receives the highest actor prior because the presidency has
-direct policy authority; other officials and executives remain topic-specific,
-independent evidence. See
+Public adapters are available for White House pages, official X API v2 timelines
+and public RSS/Atom feeds. A refreshable example registry covers 20 policy roles
+and portfolio-industry roles. The President receives the highest actor prior;
+other officials and executives remain topic-specific evidence. See
 [`docs/POLITICAL_COMMUNICATIONS.md`](docs/POLITICAL_COMMUNICATIONS.md).
 
 ## Live and resolved Polymarket research
@@ -115,23 +105,38 @@ post-resolution probability into a predictor. See
 
 ## Pro research suite
 
-`serenity_monitor/pro_research/` adds tested offline libraries for:
+`serenity_monitor/pro_research/` includes:
 
-- **Trump Policy Transmission Index**: source authority, policy stage,
-  magnitude, horizon, recency and asset sensitivity;
-- **Polymarket settlement studies**: point-in-time event analysis;
-- **Barra-inspired public proxy**: factor exposure, shrunk covariance,
-  systematic/specific risk and marginal risk contribution;
-- **Kalman dynamic exposure**: time-varying return-inferred alpha and beta;
-- **Manager skill and fragility**: alpha, Bootstrap, timing, capture,
-  persistence, leverage, concentration, liquidity and funding fragility;
-- **One-report orchestration**: combine bounded model multipliers into
-  `HOLD`, `RISK_REBALANCE` or `PAUSE_AND_VERIFY`.
+- Trump Policy Transmission Index;
+- point-in-time Polymarket settlement studies;
+- Barra-inspired public factor/covariance proxy;
+- Kalman-filtered return-inferred dynamic exposure;
+- manager alpha, Bootstrap, timing, capture, persistence and fragility;
+- bounded one-report research orchestration.
 
-These are not automatic trading modules and do not claim commercial Barra
-output or disclosed holdings. Academic and institutional motivation, caveats and
+These modules do not claim commercial MSCI Barra output, disclosed holdings or
+automatic execution. Academic and institutional motivation, caveats and
 factor-admission rules are recorded in
 [`docs/ACADEMIC_EVIDENCE_MAP.md`](docs/ACADEMIC_EVIDENCE_MAP.md).
+
+## Advanced risk, attribution and allocation
+
+The additional research libraries implement:
+
+- VIX1D/VIX9D/VIX/VIX3M/VIX6M, VVIX and SKEW term-surface stress;
+- option-chain skew, convexity, expected move, put/call and approximate gamma;
+- overnight and premarket anomaly classification using own-history and futures
+  confirmation;
+- Brinson-Fachler allocation/selection/interaction;
+- Carino multi-period contribution linking;
+- covariance-shrunk allocation proposals with costs, turnover and group caps;
+- point-in-time corporate-action reconciliation;
+- factor-model-version-isolated residual calibration;
+- automatic planning of due 1/5/20/60-session prediction settlements.
+
+All of these are research or accounting controls. They cannot submit an order,
+modify the confirmed ledger, or automatically apply a corporate action. See
+[`docs/ADVANCED_RISK_ATTRIBUTION_ALLOCATION.md`](docs/ADVANCED_RISK_ATTRIBUTION_ALLOCATION.md).
 
 ## Synthetic validation
 
@@ -161,38 +166,35 @@ All public values are fictional and all automatic-execution fields are fixed to
 
 ## Private daily runtime
 
-The existing owner-only runtime is deliberately separate from the synthetic
-commands. Its guarded sequence is:
+The guarded target sequence is:
 
 ```text
 readiness audit
 -> owner opening attestation
 -> ledger initialization
 -> dual-source accepted close
--> read-only IBKR reconciliation
--> political / prediction / social / factor research enrichment
--> private report preparation
+-> read-only IBKR and corporate-action reconciliation
+-> political / prediction / social / volatility / factor enrichment
+-> attribution and allocation review
+-> one private report
 -> verified receiver delivery
 -> same-day replay without duplication
 ```
 
-Production activation remains blocked until a private IBKR reconciliation trial,
-a receiver with idempotency or lookup, and a persisted live end-to-end report
-trial succeed. Read
+Production activation remains blocked until a private broker reconciliation
+trial, an idempotent or queryable receiver, and a persisted live end-to-end
+report trial succeed. Read
 [`docs/PRIVATE_DAILY_ACTIVATION.md`](docs/PRIVATE_DAILY_ACTIVATION.md) before
 using any mutating private-runtime command.
 
 ## Still not production-complete
 
-- private live IBKR Flex query configuration and ledger-queue integration;
+- owner-only credentials and persisted live IBKR/Flex reconciliation;
 - verified GPT receiver and recurring private delivery;
-- private actor/source credentials and live political/Polymarket snapshot
-  persistence;
-- automated corporate-action reconciliation;
-- scheduled prediction settlement and structured topic detail in the private
-  report contract;
-- expanded VIX surface, overnight/premarket model, Brinson/Carino attribution
-  and asset-allocation optimizer.
+- private live political, Polymarket and Social Heat snapshot persistence;
+- wiring the advanced libraries into the single ledger-backed private report;
+- production corporate-action source adapters and owner-confirmation queue;
+- live option-surface and overnight data adapters.
 
 The exact boundary is maintained in
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) and the next
