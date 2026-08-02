@@ -1,0 +1,164 @@
+schema_version: daily_research_requirements/v1.0.0
+last_reconciled: '2026-08-03'
+source_of_truth_order:
+  - requirements/DAILY_RESEARCH_REQUIREMENTS.yaml
+  - PROJECT_CONTRACT.yaml
+  - docs/PRODUCTION_INTEGRATION_AUDIT_V4.md
+  - docs/IMPLEMENTATION_STATUS.md
+  - README.md
+state_definitions:
+  implemented_library: code exists but is not necessarily fed live data
+  tested: deterministic tests exist
+  live_data_connected: a production adapter supplies point-in-time data
+  daily_report_integrated: the result changes or explains the one daily report
+  private_input_required: the adapter is live but requires owner-provided private data
+  blocked: required evidence is unavailable and must not be treated as neutral
+requirements:
+  - id: REPORT-0830
+    intent: one close report plus next-session add/trim review at 08:30
+    status: private_deployment_required
+    target:
+      before_date: '2026-08-10'
+      timezone: Asia/Shanghai
+      local_time: '08:30'
+      from_date: '2026-08-10'
+      timezone_after: America/New_York
+      local_time_after: '08:30'
+    evidence:
+      - private:scripts/report_schedule_gate.py
+      - private:.github/workflows/private-daily-report.yml
+  - id: REPORT-SINGLE
+    intent: exactly one user-visible report per local date; no second premarket report
+    status: daily_report_integrated
+    evidence:
+      - private:scripts/private_buy_side_daily_issue_report.py
+  - id: REPORT-COST-CONDITIONAL
+    intent: remove routine fee section; show per-security cost only for ADD_REVIEW or TRIM_REVIEW
+    status: private_deployment_required
+    evidence:
+      - private:scripts/private_buy_side_daily_issue_report.py
+  - id: REPORT-BUY-SIDE
+    intent: conclusion, change, variant perception, evidence chain, catalysts, horizon and invalidation
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/daily_advanced_research.py
+      - docs/BUY_SIDE_DAILY_REPORT_STYLE.md
+  - id: SOURCE-REDDIT-QUORA-FALLBACK
+    intent: direct source, search/agent fallback, explicit source health, never infer neutral from missing
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/research_opinion_inbox.py
+      - docs/EXTERNAL_AGENT_AND_SOCIAL_FALLBACKS.md
+  - id: SOURCE-XIAOHONGSHU-INBOX
+    intent: ingest owner-downloaded investment views without committing raw private content
+    status: private_input_required
+    evidence:
+      - serenity_monitor/research_opinion_inbox.py
+      - examples/private_research_inputs.example.json
+    hard_boundary: direct_add_open_weight_is_zero
+  - id: SOURCE-GITHUB-AGENT-DIGEST
+    intent: accept summaries from external financial/news agents and independently re-verify original claims
+    status: private_input_required
+    evidence:
+      - serenity_monitor/research_opinion_inbox.py
+      - docs/EXTERNAL_AGENT_AND_SOCIAL_FALLBACKS.md
+    hard_boundary: agent_summary_is_not_original_evidence
+  - id: SOURCE-FUND-FINANCIAL-NEWS
+    intent: monitor asset managers, fund sponsors, banks, brokers and exchanges
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-POLITICAL-CLAIMS
+    intent: use complete policy claims, source authority, implementation stage and media disagreement
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/political_collectors.py
+      - serenity_monitor/political_communications.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-TPTI
+    intent: Trump/White House policy transmission coefficient with bounded asset impact
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/pro_research/policy.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-POLYMARKET-LIVE
+    intent: unresolved-market probability, spread, liquidity, depth, velocity and time-to-resolution
+    status: live_data_connected
+    evidence:
+      - serenity_monitor/polymarket_live.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-POLYMARKET-RESOLVED
+    intent: pre-resolution frozen probability event study with 1/5/20/60-session calibration
+    status: private_input_required
+    evidence:
+      - serenity_monitor/pro_research/polymarket.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-VOLATILITY
+    intent: VIX1D/VIX9D/VIX/VIX3M/VIX6M/VVIX/SKEW as one correlated downside group
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/advanced_market_risk.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-OPTION-TAIL
+    intent: option skew, convexity, liquidity and approximate gamma
+    status: private_input_required
+    evidence:
+      - serenity_monitor/advanced_market_risk.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-OVERNIGHT
+    intent: keep overnight/premarket anomaly inside the single 08:30 report
+    status: private_input_required
+    evidence:
+      - serenity_monitor/advanced_market_risk.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-BARRA-KALMAN
+    intent: public factor/covariance proxy and dynamic exposure from live research history
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/pro_research/barra.py
+      - serenity_monitor/pro_research/kalman.py
+      - serenity_monitor/daily_advanced_research.py
+  - id: MODEL-MANAGER-SKILL
+    intent: alpha, bootstrap, TM/HM timing, capture, persistence, style and fragility
+    status: private_input_required
+    evidence:
+      - serenity_monitor/pro_research/manager_skill.py
+      - serenity_monitor/daily_advanced_research.py
+      - skills/evaluate-us-funds/SKILL.md
+  - id: MODEL-FACTOR-VALIDATION
+    intent: 1/5/20-session purged walk-forward, costs, FDR, PSR and quarantine
+    status: daily_report_integrated
+    evidence:
+      - serenity_monitor/institutional_factor_research.py
+      - serenity_monitor/factor_backtest.py
+  - id: MODEL-ATTRIBUTION-ALLOCATION
+    intent: Brinson/Carino and constrained proposals remain diagnostics, never orders
+    status: implemented_library
+    evidence:
+      - serenity_monitor/performance_attribution.py
+      - serenity_monitor/portfolio_optimizer.py
+  - id: CONTEXT-PERSISTENCE-SKILL
+    intent: prevent future Codex/agent changes from dropping prior requirements or confusing code with production integration
+    status: tested
+    evidence:
+      - skills/maintain-daily-research-context/SKILL.md
+      - scripts/check_requirement_ledger.py
+  - id: EXECUTION-BOUNDARY
+    intent: no broker order endpoint or automatic confirmed-ledger mutation
+    status: non_negotiable
+    evidence:
+      - PROJECT_CONTRACT.yaml
+change_control:
+  every_change_must:
+    - read the source_of_truth_order before editing
+    - update each affected requirement status and evidence
+    - distinguish library, test, live data and report integration
+    - preserve point-in-time timestamps and source health
+    - run scripts/check_requirement_ledger.py
+    - run the complete test suite
+  forbidden_claims:
+    - implemented means production complete
+    - missing social or market data means neutral
+    - an agent summary is an original source
+    - a manager track record automatically belongs to a new manager
+    - one correlated source family counts as independent confirmation

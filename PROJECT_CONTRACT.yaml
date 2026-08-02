@@ -1,38 +1,50 @@
-schema_version: serenity_project_contract/v1.0.0
+schema_version: serenity_project_contract/v1.1.0
 product:
   name: US Stock Daily Research
   owner_goal: >-
-    Produce one concise private daily report with the conclusion first, explicit
-    add/trim/hold explanations, broker facts when available, fee and cost drag,
-    direct theses, invalidation conditions and versioned factor evidence.
+    Produce one private 08:30 local-time report with the conclusion first,
+    next-session add/trim/hold/block explanations, broker position facts,
+    buy-side theses, falsification conditions, advanced-model diagnostics and
+    source health. Show security-level transaction economics only when an
+    actual add/trim candidate exists.
 repository_roles:
   US-stock-daily-report-framework:
     visibility: public
     role: canonical research framework
-    contains: [code, synthetic_examples, tests, methodology]
+    contains: [code, synthetic_examples, tests, methodology, requirement_ledger]
   US-stock-daily-report:
     visibility_required: private
-    role: owner deployment and private report receiver
+    role: owner deployment, private inputs and one daily report receiver
     rule: must never be treated as safe public history
+sources_of_truth:
+  - requirements/DAILY_RESEARCH_REQUIREMENTS.yaml
+  - PROJECT_CONTRACT.yaml
+  - docs/PRODUCTION_INTEGRATION_AUDIT_V4.md
+  - docs/IMPLEMENTATION_STATUS.md
+  - README.md
 non_negotiables:
   - no broker order endpoint
   - no automatic execution
   - no private holdings or reports in Git, Actions summary, or public artifacts
-  - one user-visible daily report per date
+  - one user-visible daily report per local date
   - conclusion and action explanation appear before technical evidence
-  - fees and modeled cost drag are displayed separately from returns
-  - missing data remains UNKNOWN, blocked, degraded, or stale; never neutral by default
+  - routine portfolio-wide fees do not appear in the main daily report
+  - per-security transaction economics appear only for add or trim candidates
+  - missing costs remain UNKNOWN and are never assumed to be zero
+  - missing data remains UNKNOWN, blocked, degraded, not_configured, or stale; never neutral by default
   - social media cannot independently open, add, trim, or exit
+  - external agent summaries are secondary synthesis and never original evidence
   - political communications cannot independently open, add, trim, or exit
   - global narratives cannot independently open, add, trim, or exit
   - prediction-market prices are noisy forecasts, not objective probabilities
   - modeled DCA is never broker-confirmed execution
-  - all point-in-time models must preserve first-observed timestamps
-  - walk-forward training must end before every out-of-sample test block
-  - forward-label overlap must be purged before every test block
+  - all point-in-time models preserve first-observed timestamps
+  - walk-forward training ends before every out-of-sample test block
+  - forward-label overlap is purged before every test block
   - multiple factor tests require false-discovery-rate control
   - daily monitoring may not silently redefine a factor
   - Quora and search-only snippets have zero direct decision weight
+  - Xiaohongshu and social views have zero direct add or open weight
   - factor residual calibration may never pool model versions
   - corporate actions may never auto-adjust the confirmed ledger
 private_daily_plan:
@@ -44,18 +56,28 @@ private_daily_plan:
   daily_test_preflight: true
   ibkr_flex_daily_refresh_required: false
   stale_broker_snapshot_blocks_active_add_or_open: true
+  schedule:
+    before_date: '2026-08-10'
+    timezone: Asia/Shanghai
+    local_time: '08:30'
+    from_date: '2026-08-10'
+    timezone_after: America/New_York
+    local_time_after: '08:30'
+    dst_aware: true
   report_sections:
-    - conclusion
-    - position_actions
+    - conclusion_and_next_session_actions
     - broker_position_state
-    - fees_and_cost_drag
-    - direct_theses_and_invalidation
-    - multi_horizon_factor_evidence
-    - global_event_transmission
-    - collapsed_data_and_test_status
+    - buy_side_theses_change_variant_evidence_catalysts_horizon_invalidation
+    - advanced_models_and_factor_evidence
+    - fund_financial_company_news_and_verified_market_views
+    - conditional_security_level_transaction_economics
+    - collapsed_data_tests_and_raw_broker_facts
 advanced_models:
   political_communication_brief:
     implemented_library: true
+    tested: true
+    live_adapter: white_house_public_and_optional_private_documents
+    daily_report_integrated: true
     raw_mention_count_signal: false
     complete_policy_claim_extraction: true
     president_has_highest_actor_prior: true
@@ -64,19 +86,38 @@ advanced_models:
     independent_trade_trigger: false
   trump_policy_transmission_index:
     implemented_library: true
+    tested: true
+    live_adapter: validated_policy_claims_and_private_events
+    daily_report_integrated: true
     decision_score_cap: 0.05
     independent_trade_trigger: false
   global_market_narratives:
     implemented_library: true
-    sources: [major_international_media, korean_regional_media, issuer_primary_newsroom, reddit_community, quora_search_context, bounded_kol_search]
+    tested: true
+    live_adapter: public_news_search_and_private_opinion_inbox
+    daily_report_integrated: true
+    sources: [major_international_media, korean_regional_media, issuer_primary_newsroom, reddit_community, quora_search_context, bounded_kol_search, fund_and_financial_company_news]
     topics: [oil_supply, middle_east_escalation, shipping_disruption, memory_hbm_demand, memory_oversupply, semiconductor_export_controls, korea_semiconductor_policy, trade_tariff, china_demand, rates_inflation]
     correlated_source_collapse: independence_group_x_topic
     quora_direct_weight: 0
+    xiaohongshu_direct_add_open_weight: 0
     downside_risk_budget_cap: 0.10
     decision_score_range: [-0.04, 0.01]
     independent_trade_trigger: false
+  external_agent_and_social_inbox:
+    implemented_library: true
+    tested: true
+    live_adapter: private_base64_or_owner_local_json
+    daily_report_integrated: true
+    agent_summary_is_original_evidence: false
+    verification: primary_source_or_two_independent_institutional_groups
+    social_direct_add_open_weight: 0
+    downside_overlay_cap: 0.05
   walk_forward_factor_validation:
     implemented_library: true
+    tested: true
+    live_adapter: current_public_research_history
+    daily_report_integrated: true
     horizons_sessions: [1, 5, 20]
     strict_train_before_test: true
     purge_equal_to_horizon_default: true
@@ -94,67 +135,115 @@ advanced_models:
     broker_order_capability: false
   live_polymarket_sentiment:
     implemented_library: true
+    tested: true
+    live_adapter: public_gamma_and_clob
+    daily_report_integrated: true
     decision_score_cap: 0.03
     conditions: [spread, liquidity, depth, time_to_resolution, calibration]
     objective_probability_claim: false
     order_capability: false
   polymarket_settlement_event_study:
     implemented_library: true
+    tested: true
+    live_adapter: private_point_in_time_event_ledger_required
+    daily_report_integrated: true
     freeze_before_resolution_hours: 24
+    horizons_sessions: [1, 5, 20, 60]
     lookahead_permitted: false
   volatility_surface_and_tail_risk:
     implemented_library: true
+    tested: true
+    live_adapter: public_vix_family_or_private_snapshot
+    daily_report_integrated: true
     inputs: [VIX1D, VIX9D, VIX, VIX3M, VIX6M, VVIX, SKEW, options_chain]
     correlated_option_surface_group: true
     downside_only_risk_control: true
     independent_trade_trigger: false
   overnight_and_premarket_anomaly:
     implemented_library: true
+    tested: true
+    live_adapter: private_point_in_time_snapshot_required
+    daily_report_integrated: true
     own_history_normalization_required: true
     futures_and_liquidity_confirmation: true
     second_user_facing_report: false
     independent_trade_trigger: false
   barra_public_proxy:
     implemented_library: true
+    tested: true
+    live_adapter: current_public_research_history
+    daily_report_integrated: true
     commercial_barra_claim: false
   kalman_dynamic_exposure:
     implemented_library: true
+    tested: true
+    live_adapter: current_public_research_history
+    daily_report_integrated: true
     disclosed_holding_claim: false
+  manager_skill_and_fragility:
+    implemented_library: true
+    tested: true
+    live_adapter: private_manager_series_or_active_fund_strategy_proxy
+    daily_report_integrated: true
+    metrics: [alpha, bootstrap, treynor_mazuy, henriksson_merton, up_down_capture, rolling_persistence, tracking_error, fragility]
+    manager_change_attribution_required: true
+    copy_trade_requires_fragility_gate: true
   brinson_fachler_and_carino:
     implemented_library: true
+    tested: true
+    live_adapter: private_period_attribution_inputs_required
+    daily_report_integrated: false
     accounting_reconciliation_required: true
     broker_order_capability: false
   constrained_asset_allocation:
     implemented_library: true
+    tested: true
+    live_adapter: private_constraints_and_cost_inputs_required
+    daily_report_integrated: false
     turnover_and_cost_constraints: true
     tax_and_owner_gates_downstream: true
     broker_order_capability: false
   factor_residual_calibration:
     implemented_library: true
+    tested: true
+    live_adapter: private_prediction_ledger_required
+    daily_report_integrated: false
     factor_model_version_isolation: true
     cross_version_pooling: false
     automatic_weight_quarantine: true
   prediction_settlement_scheduler:
     implemented_library: true
+    tested: true
+    live_adapter: private_prediction_ledger_required
+    daily_report_integrated: false
     horizons: [1, 5, 20, 60]
     complete_close_path_required: true
     idempotent_callback_only: true
     broker_order_capability: false
   corporate_action_reconciliation:
     implemented_library: true
+    tested: true
+    live_adapter: private_issuer_regulator_exchange_evidence_required
+    daily_report_integrated: partial_block_add_gate
     primary_source_required: true
     automatic_adjustment: false
-  manager_skill_and_fragility:
-    implemented_library: true
-    copy_trade_requires_fragility_gate: true
   social_heat:
     implemented_existing_framework: true
     xiaohongshu_execution_weight: 0
     combined_social_score_cap: 0.05
   ibkr_flex_readonly_reconciliation:
     implemented_library: true
+    tested: true
+    live_adapter: verified_private_repository_secrets
+    daily_report_integrated: true
     automatic_ledger_mutation: false
     broker_order_capability: false
+context_persistence:
+  requirement_ledger: requirements/DAILY_RESEARCH_REQUIREMENTS.yaml
+  maintenance_skill: skills/maintain-daily-research-context/SKILL.md
+  ci_check: scripts/check_requirement_ledger.py
+  four_state_audit_required: true
+  prohibited_shortcut: implemented_library_is_not_production_complete
 operational_activation_gates:
   - repository_visibility_correct
   - private_config_outside_git_and_cloud_sync
@@ -165,22 +254,27 @@ operational_activation_gates:
   - one_end_to_end_live_report_delivered_and_replayed_without_duplicate
 acceptance:
   commands:
-    - python -m compileall -q serenity_monitor run_pro_daily.py
+    - python -m compileall -q .
+    - python scripts/check_public_privacy.py
+    - python scripts/check_project_contract.py
+    - python scripts/check_requirement_ledger.py
     - pytest -q
-    - python run_pro_daily.py --config examples/pro_daily_config.example.yaml --out-dir out_pro_demo
   expected:
     - report_conclusion_precedes_evidence
     - report_contains_add_trim_hold_or_explicit_block
-    - report_separates_actual_fees_and_modeled_cost_drag
-    - direct_theses_include_invalidation_conditions
-    - global_headlines_are_collapsed_by_independence_group_and_topic
-    - quora_context_has_zero_direct_weight
-    - reddit_is_one_correlated_community_group
+    - routine_portfolio_fee_section_is_absent
+    - security_transaction_costs_appear_only_for_add_or_trim_candidates
+    - direct_theses_include_change_variant_view_catalysts_horizon_and_invalidation
+    - fund_and_financial_company_news_are_visible
+    - agent_summaries_require_original_links_and_reverification
+    - xiaohongshu_and_social_views_have_zero_direct_add_open_weight
+    - political_claims_and_tpti_run_in_the_daily_path
+    - live_and_resolved_polymarket_states_are_visible
+    - vix_barra_kalman_and_manager_skill_states_are_visible
     - walk_forward_training_ends_before_test
     - purge_and_embargo_prevent_forward_label_overlap
     - multiple_factor_tests_use_fdr_control
     - factor_admission_uses_1_5_20_session_evidence
     - future_target_mutation_does_not_change_prior_oos_prediction
-    - factor_costs_are_deducted_and_weak_factors_are_quarantined
     - ibkr_flex_never_mutates_the_confirmed_ledger
     - public_examples_are_synthetic
