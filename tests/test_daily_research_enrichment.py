@@ -41,10 +41,7 @@ def _synthetic_prices() -> pd.DataFrame:
         "VOO": voo,
     }
     return pd.DataFrame(
-        {
-            key: 100.0 * np.cumprod(1.0 + value)
-            for key, value in series.items()
-        },
+        {key: 100.0 * np.cumprod(1.0 + value) for key, value in series.items()},
         index=dates,
     )
 
@@ -69,8 +66,10 @@ def test_daily_factor_validation_produces_versioned_oos_result():
         ["MU", "QQQM", "VOO", "SCHD", "SMH"],
         transaction_cost_bps=4.0,
     )
-    assert result.feature_version == "daily_global_proxy_factors/v1.0.0"
-    assert result.oos_observations >= 100
+    assert result.feature_version == "daily_global_proxy_factors/v2.0.0"
+    assert result.oos_observations >= 50
+    assert result.purge_sessions == 5
+    assert result.embargo_sessions == 5
     assert result.total_cost_drag >= 0
     assert result.model_version.startswith("walk_forward_ridge:")
     assert not result.automatic_trading_permitted
@@ -85,12 +84,14 @@ def test_daily_enrichment_runs_without_network_and_preserves_blocked_sources():
     )
     assert result.status in {"completed", "partial"}
     assert result.factor_validation is not None
+    assert result.institutional_factor_research is not None
     assert result.global_narratives.status == "no_data"
     statuses = {item["source"]: item["status"] for item in result.source_health}
     assert statuses["Reddit"] == "disabled"
     assert statuses["Public Web KOL Discovery"] == "disabled"
     markdown = render_daily_research_markdown(result)
-    assert "全球市场与主观叙事因子" in markdown
-    assert "滚动回归与因子有效性" in markdown
-    assert "不推断因子有效" not in markdown
+    assert "今日核心论点" in markdown
+    assert "因子有效性" in markdown
+    assert "事件与跨资产传导" in markdown
+    assert "数据源健康与方法边界" in markdown
     assert not result.automatic_trading_permitted
