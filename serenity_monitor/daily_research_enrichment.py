@@ -1,9 +1,8 @@
 """Daily global-source and factor-validation enrichment for one private report.
 
-The enrichment layer is intentionally independent of broker accounting. It may
-run every day using public research sources and historical prices, while broker
-reconciliation may run less frequently. Missing research data remains visible
-and never becomes a neutral or bullish input.
+Public research may refresh every day while broker reconciliation runs on a
+separate cadence. Missing research remains visible and never becomes a neutral
+or bullish default. Adjusted history is research-only, not settlement-grade.
 """
 from __future__ import annotations
 
@@ -18,7 +17,6 @@ import requests
 from .external_views import (
     ExternalBundle,
     ExternalSettings,
-    SourceStatus,
     collect_external_views,
 )
 from .factor_backtest import FactorBacktestResult, walk_forward_factor_backtest
@@ -28,14 +26,16 @@ from .global_market_narratives import (
 )
 
 
+# external_views intentionally caps public-search queries at four. Keep every
+# required category inside these four executed queries rather than documenting
+# sources that would be silently truncated.
 DEFAULT_GLOBAL_QUERIES = (
     "site:aljazeera.com oil crude OPEC Hormuz Red Sea shipping",
     "site:news.skhynix.com HBM DRAM memory semiconductor partnership",
-    "site:en.yna.co.kr SK hynix HBM memory semiconductor",
-    "site:koreaherald.com SK hynix HBM memory semiconductor",
-    "site:koreatimes.co.kr SK hynix HBM memory semiconductor",
-    "site:quora.com Micron MU HBM semiconductor outlook",
-    '"Serenity" Micron MU HBM semiconductor investing',
+    "(site:en.yna.co.kr OR site:koreaherald.com OR site:koreatimes.co.kr) "
+    "SK hynix HBM memory semiconductor",
+    "(site:quora.com Micron MU HBM semiconductor outlook) OR "
+    '("Serenity" Micron MU HBM semiconductor investing)',
 )
 
 _RESEARCH_PROXIES = (
@@ -101,21 +101,19 @@ def _targets(symbols: Iterable[str]) -> list[dict[str, Any]]:
         if not ticker or ticker in seen:
             continue
         seen.add(ticker)
+        aliases = _ALIASES.get(ticker, [])
         targets.append(
             {
                 "ticker": ticker,
-                "name": (_ALIASES.get(ticker) or [ticker])[0],
-                "social_aliases": _ALIASES.get(ticker, []),
+                "name": aliases[0] if aliases else ticker,
+                "social_aliases": aliases,
                 "asset_type": "stock" if ticker in {"MU", "NVDA"} else "etf",
             }
         )
     return targets
 
 
-def default_global_source_settings(
-    *,
-    lookback_days: int = 7,
-) -> ExternalSettings:
+def default_global_source_settings(*, lookback_days: int = 7) -> ExternalSettings:
     return ExternalSettings(
         enabled=True,
         lookback_days=max(1, int(lookback_days)),
@@ -154,11 +152,10 @@ def collect_daily_global_narratives(
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("as_of must be timezone-aware")
     symbol_list = [str(item).strip().upper() for item in symbols if str(item).strip()]
-    targets = _targets(symbol_list)
     source_settings = settings or default_global_source_settings()
     bundle = collect_external_views(
         (),
-        targets,
+        _targets(symbol_list),
         source_settings,
         session=session,
         network_enabled=network_enabled,
@@ -166,13 +163,15 @@ def collect_daily_global_narratives(
     items = list(bundle.global_items)
     for view in bundle.by_ticker.values():
         items.extend(view.items)
-    result = score_global_narratives(
-        items,
-        as_of=now,
-        lookback_days=source_settings.lookback_days,
-        portfolio_tickers=symbol_list,
+    return (
+        score_global_narratives(
+            items,
+            as_of=now,
+            lookback_days=source_settings.lookback_days,
+            portfolio_tickers=symbol_list,
+        ),
+        bundle,
     )
-    return result, bundle
 
 
 def fetch_research_price_history(
@@ -180,7 +179,7 @@ def fetch_research_price_history(
     *,
     period: str = "5y",
 ) -> tuple[pd.DataFrame | None, Mapping[str, Any]]:
-    """Fetch adjusted research history using yfinance as a non-settlement source."""
+    """Fetch adjusted history as a non-settlement research source."""
 
     requested = sorted(
         {
@@ -219,8 +218,12 @@ def fetch_research_price_history(
                 raise ValueError("close field unavailable")
             close = raw[["Close"]].rename(columns={"Close": requested[0]})
         close.columns = [str(column).upper() for column in close.columns]
-        close = close.apply(pd.to_numeric, errors="coerce").sort_index()
-        close = close.dropna(axis=1, how="all").dropna(how="all")
+        close = (
+            close.apply(pd.to_numeric, errors="coerce")
+            .sort_index()
+            .dropna(axis=1, how="all")
+            .dropna(how="all")
+        )
         if len(close) < 280:
             raise ValueError("insufficient history")
         return close, {
@@ -243,7 +246,7 @@ def build_factor_dataset(
     prices: pd.DataFrame,
     portfolio_symbols: Iterable[str],
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """Build lag-safe factor signals and an equal-weight portfolio return target."""
+    """Build close-t signals and a t+1 onward portfolio-return target input."""
 
     close = prices.copy().sort_index().apply(pd.to_numeric, errors="coerce")
     close.columns = [str(column).upper() for column in close.columns]
@@ -265,14 +268,12 @@ def build_factor_dataset(
     def relative(left: str, right: str, periods: int) -> pd.Series | None:
         lhs = total_return(left, periods)
         rhs = total_return(right, periods)
-        if lhs is None or rhs is None:
-            return None
-        return lhs - rhs
+        return None if lhs is None or rhs is None else lhs - rhs
 
     signals: dict[str, pd.Series] = {}
     if "SPY" in returns:
-        signals["market_momentum_21"] = total_return("SPY", 21)
-        signals["market_momentum_63"] = total_return("SPY", 63)
+        signals["market_momentum_21"] = total_return("SPY", 21)  # type: ignore[assignment]
+        signals["market_momentum_63"] = total_return("SPY", 63)  # type: ignore[assignment]
         signals["market_volatility_21"] = -returns["SPY"].rolling(21).std()
     candidates = {
         "semis_relative_21": relative("SMH", "SPY", 21),
@@ -283,13 +284,10 @@ def build_factor_dataset(
         "breadth_relative_21": relative("IWM", "SPY", 21),
         "defensive_relative_21": relative("SCHD", "SPY", 21),
     }
-    for name, series in candidates.items():
-        if series is not None:
-            signals[name] = series
+    signals.update({name: series for name, series in candidates.items() if series is not None})
     if len(signals) < 2:
         raise ValueError("insufficient factor proxy coverage")
-    frame = pd.DataFrame(signals).replace([np.inf, -np.inf], np.nan)
-    return frame, target
+    return pd.DataFrame(signals).replace([np.inf, -np.inf], np.nan), target
 
 
 def validate_daily_factors(
@@ -335,11 +333,7 @@ def build_daily_research_enrichment(
         network_enabled=network_enabled,
     )
     health: list[Mapping[str, Any]] = [
-        {
-            "source": item.source,
-            "status": item.status,
-            "detail": item.detail,
-        }
+        {"source": item.source, "status": item.status, "detail": item.detail}
         for item in bundle.statuses
     ]
     prices = price_history
@@ -356,7 +350,7 @@ def build_daily_research_enrichment(
         )
 
     factor_result: FactorBacktestResult | None = None
-    warnings: list[str] = list(global_result.warnings)
+    warnings = list(global_result.warnings)
     if prices is not None:
         try:
             factor_result = validate_daily_factors(prices, symbol_list)
@@ -379,9 +373,7 @@ def build_daily_research_enrichment(
                     "detail": "walk-forward factor validation unavailable",
                 }
             )
-            warnings.append(
-                "Factor validation is blocked; no factor weight is inferred."
-            )
+            warnings.append("Factor validation is blocked; no factor weight is inferred.")
     else:
         health.append(
             {
@@ -453,11 +445,10 @@ def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
             "|---|---|---:|---:|---|---|",
         ]
         for item in narrative.observations[:10]:
-            title = item.title.replace("|", "/")
             state = "context_only" if item.context_only else "weighted"
             lines.append(
                 f"| {item.source} | {item.topic} | {item.direction:+.2f} | "
-                f"{item.weight:.2f} | {state} | {title} |"
+                f"{item.weight:.2f} | {state} | {item.title.replace('|', '/')} |"
             )
 
     factor = result.factor_validation
@@ -465,14 +456,18 @@ def render_daily_research_markdown(result: DailyResearchEnrichment) -> str:
     if factor is None:
         lines.append("- `BLOCKED`：缺少足够的历史价格或因子代理；不推断因子有效。")
     else:
+        sharpe = "UNKNOWN" if factor.net_sharpe is None else f"{factor.net_sharpe:.2f}"
+        pred_ic = (
+            "UNKNOWN"
+            if factor.prediction_information_coefficient is None
+            else f"{factor.prediction_information_coefficient:+.3f}"
+        )
         lines += [
             f"- 状态：`{factor.status}`；OOS 观察：{factor.oos_observations}；"
             f"严格 walk-forward 模型：`{factor.model_version}`。",
             f"- OOS 净年化：{factor.net_annualized_return:+.2%}；"
-            f"净年化波动：{factor.net_annualized_volatility:.2%}；"
-            f"Sharpe：{'UNKNOWN' if factor.net_sharpe is None else f'{factor.net_sharpe:.2f}'}。",
-            f"- 命中率：{_pct(factor.hit_rate)}；"
-            f"预测 IC：{'UNKNOWN' if factor.prediction_information_coefficient is None else f'{factor.prediction_information_coefficient:+.3f}'}；"
+            f"净年化波动：{factor.net_annualized_volatility:.2%}；Sharpe：{sharpe}。",
+            f"- 命中率：{_pct(factor.hit_rate)}；预测 IC：{pred_ic}；"
             f"最大回撤：{factor.max_drawdown:.2%}。",
             f"- 平均换手：{factor.average_turnover:.2%}；"
             f"成本拖累：{factor.total_cost_drag:.4f}；"
