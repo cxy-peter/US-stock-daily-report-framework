@@ -53,16 +53,18 @@ def test_walk_forward_purges_forward_label_overlap_and_controls_multiple_tests()
 
 def test_multi_horizon_research_requires_cross_horizon_evidence():
     rng = np.random.default_rng(2026)
-    dates = pd.bdate_range("2018-01-01", periods=1600)
-    signal = rng.normal(size=len(dates))
+    dates = pd.bdate_range("2018-01-01", periods=1800)
+    innovations = rng.normal(size=len(dates))
+    signal = np.zeros(len(dates))
+    for index in range(1, len(dates)):
+        signal[index] = 0.94 * signal[index - 1] + 0.35 * innovations[index]
     noise = rng.normal(size=len(dates))
-    daily = pd.Series(
-        0.0018 * signal + rng.normal(0, 0.007, len(dates)),
-        index=dates,
-    )
+    # A close-t signal predicts t+1 and, through persistence, later daily returns.
+    daily_values = np.zeros(len(dates))
+    daily_values[1:] = 0.0045 * signal[:-1] + rng.normal(0, 0.003, len(dates) - 1)
     result = run_institutional_factor_research(
         pd.DataFrame({"signal": signal, "noise": noise}, index=dates),
-        daily,
+        pd.Series(daily_values, index=dates),
         as_of=dt.date(2026, 8, 2),
         feature_version="institutional-test-v1",
         transaction_cost_bps=2.0,
@@ -70,7 +72,8 @@ def test_multi_horizon_research_requires_cross_horizon_evidence():
     diagnostics = {item.factor: item for item in result.factor_diagnostics}
     assert {item.horizon_sessions for item in result.horizon_summaries} == {1, 5, 20}
     assert diagnostics["signal"].admission_status in {"active", "watch"}
-    assert diagnostics["signal"].effective_weight_multiplier >= diagnostics["noise"].effective_weight_multiplier
+    assert len(diagnostics["signal"].active_horizons) + len(diagnostics["signal"].watch_horizons) >= 2
+    assert diagnostics["signal"].effective_weight_multiplier > diagnostics["noise"].effective_weight_multiplier
     assert result.model_refit_policy.startswith("daily_append")
     assert not result.automatic_trading_permitted
 
