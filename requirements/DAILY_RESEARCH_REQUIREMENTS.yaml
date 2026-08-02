@@ -16,7 +16,7 @@ state_definitions:
 requirements:
   - id: REPORT-0830
     intent: one close report plus next-session add/trim review at 08:30
-    status: private_deployment_required
+    status: daily_report_integrated
     target:
       before_date: '2026-08-10'
       timezone: Asia/Shanghai
@@ -34,7 +34,7 @@ requirements:
       - private:scripts/private_buy_side_daily_issue_report.py
   - id: REPORT-COST-CONDITIONAL
     intent: remove routine fee section; show per-security cost only for ADD_REVIEW or TRIM_REVIEW
-    status: private_deployment_required
+    status: daily_report_integrated
     evidence:
       - private:scripts/private_buy_side_daily_issue_report.py
   - id: REPORT-BUY-SIDE
@@ -83,7 +83,7 @@ requirements:
       - serenity_monitor/daily_advanced_research.py
   - id: MODEL-POLYMARKET-LIVE
     intent: unresolved-market probability, spread, liquidity, depth, velocity and time-to-resolution
-    status: live_data_connected
+    status: daily_report_integrated
     evidence:
       - serenity_monitor/polymarket_live.py
       - serenity_monitor/daily_advanced_research.py
