@@ -413,10 +413,30 @@ def _independence_group(item: Any, source_class: str, source: str, url: str) -> 
     return re.sub(r"[^a-z0-9]+", "_", source.casefold()).strip("_") or "unknown"
 
 
+_STEM_TERMS = frozenset({"escalat", "retaliat", "accelerat"})
+
+
+def _term_count(text: str, term: str) -> int:
+    """Count ASCII terms at token boundaries; keep CJK/Korean substring matching."""
+
+    normalized = str(term).casefold().strip()
+    if not normalized:
+        return 0
+    if not re.search(r"[a-z0-9]", normalized):
+        return text.count(normalized)
+    suffix = r"[a-z]*" if normalized in _STEM_TERMS else ""
+    pattern = rf"(?<![a-z0-9]){re.escape(normalized)}{suffix}(?![a-z0-9])"
+    return len(re.findall(pattern, text))
+
+
+def _count_terms(text: str, terms: Iterable[str]) -> int:
+    return sum(_term_count(text, term) for term in terms)
+
+
 def _lexical_sentiment(text: str) -> float:
     lowered = text.casefold()
-    positive = sum(lowered.count(term) for term in _BULLISH)
-    negative = sum(lowered.count(term) for term in _BEARISH)
+    positive = _count_terms(lowered, _BULLISH)
+    negative = _count_terms(lowered, _BEARISH)
     total = positive + negative
     if total == 0:
         return 0.0
@@ -431,14 +451,12 @@ def _topic_direction(topic: str, text: str, explicit: Any) -> float:
             pass
     lowered = text.casefold()
     rule = _TOPIC_RULES[topic]
-    positive = sum(lowered.count(term) for term in rule["positive"])
-    negative = sum(lowered.count(term) for term in rule["negative"])
+    positive = _count_terms(lowered, rule["positive"])
+    negative = _count_terms(lowered, rule["negative"])
     if positive > negative:
         return 1.0
     if negative > positive:
         return -1.0
-    if topic in {"middle_east_escalation", "oil_supply", "shipping_disruption"}:
-        return 0.25
     return _lexical_sentiment(text)
 
 
@@ -450,7 +468,7 @@ def _topics(text: str, explicit: Any) -> list[str]:
     lowered = text.casefold()
     scores = []
     for topic, rule in _TOPIC_RULES.items():
-        count = sum(lowered.count(term) for term in rule["keywords"])
+        count = _count_terms(lowered, rule["keywords"])
         if count:
             scores.append((count, topic))
     return [topic for _, topic in sorted(scores, reverse=True)[:3]]
@@ -555,6 +573,8 @@ def score_global_narratives(
                 text,
                 _get(raw, "direction", "claim_direction", default=None),
             )
+            if abs(direction) < 1e-12:
+                continue
             impacts = {
                 asset: round(direction * magnitude * coefficient, 6)
                 for asset, coefficient in _TRANSMISSION.get(topic, {}).items()
