@@ -29,7 +29,7 @@ access to any private fund's internal model:
   Borwein and López de Prado.
 
 The implementation uses a small portfolio-relevant proxy set first. New factors
-must enter through `config/factor_registry.example.yaml` with a definition,
+must enter through `examples/factor_registry.example.yaml` with a definition,
 economic rationale, data lineage, expected horizon and implementation role.
 
 ## Daily, weekly and monthly responsibilities
