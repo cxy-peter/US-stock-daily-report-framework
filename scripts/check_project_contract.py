@@ -20,8 +20,19 @@ def main() -> int:
         rules = set(contract["non_negotiables"])
         assert "no broker order endpoint" in rules
         assert "one user-visible daily report per date" in rules
+        assert "political communications cannot independently open, add, trim, or exit" in rules
+        assert "prediction-market prices are noisy forecasts, not objective probabilities" in rules
         assert contract["private_daily_plan"]["five_tickers_required"] is True
         assert float(contract["private_daily_plan"]["base_amount_usd_each"]) == 20.0
+        political = contract["advanced_models"]["political_communication_brief"]
+        assert political["raw_mention_count_signal"] is False
+        assert political["complete_policy_claim_extraction"] is True
+        assert political["media_can_replace_primary_source"] is False
+        assert political["independent_trade_trigger"] is False
+        live_poly = contract["advanced_models"]["live_polymarket_sentiment"]
+        assert live_poly["objective_probability_claim"] is False
+        assert live_poly["order_capability"] is False
+        assert float(live_poly["decision_score_cap"]) <= 0.03
         assert contract["advanced_models"]["trump_policy_transmission_index"]["independent_trade_trigger"] is False
         assert contract["advanced_models"]["polymarket_settlement_event_study"]["lookahead_permitted"] is False
         assert contract["advanced_models"]["social_heat"]["xiaohongshu_execution_weight"] == 0
